@@ -598,6 +598,68 @@ async fn install_app(app: tauri::AppHandle, spec: InstallSpec) -> Result<Install
 }
 
 // ---------------------------------------------------------------------------
+// Auto-update do próprio Hub (sempre disparado pelo usuário, nunca sozinho)
+// ---------------------------------------------------------------------------
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SelfUpdateSpec {
+    repo: String,
+    asset_pattern: String,
+}
+
+/// Baixa a versão nova do Hub e aplica.
+/// Windows: agenda o instalador silencioso (com 2s de atraso pro exe liberar) e
+/// fecha o Hub — retorna "closing". Linux: sobrescreve o próprio AppImage
+/// ($APPIMAGE) com rename atômico — retorna "restart" (usuário reabre).
+#[tauri::command]
+async fn update_self(app: tauri::AppHandle, spec: SelfUpdateSpec) -> Result<String, String> {
+    let release = fetch_latest(&spec.repo).await?;
+    let asset = release
+        .assets
+        .iter()
+        .find(|a| glob_match(&spec.asset_pattern, &a.name))
+        .cloned()
+        .ok_or_else(|| format!("Nenhum asset casa com '{}'", spec.asset_pattern))?;
+    let payload = download_asset(&app, "hub", &asset).await?;
+
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+        // O instalador não sobrescreve exe em uso: dispara com atraso e fecha o Hub.
+        Command::new("cmd")
+            .args([
+                "/C",
+                &format!("timeout /T 2 /NOBREAK >nul & \"{}\" /S", payload.display()),
+            ])
+            .creation_flags(CREATE_NO_WINDOW)
+            .spawn()
+            .map_err(|e| format!("Falha ao agendar o instalador: {}", e))?;
+        let handle = app.clone();
+        std::thread::spawn(move || {
+            std::thread::sleep(std::time::Duration::from_millis(600));
+            handle.exit(0);
+        });
+        Ok("closing".into())
+    }
+    #[cfg(not(windows))]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let target = std::env::var("APPIMAGE")
+            .map_err(|_| "O Hub não está rodando como AppImage".to_string())?;
+        let tmp = format!("{}.new", target);
+        fs::copy(&payload, &tmp).map_err(|e| format!("Falha ao copiar: {}", e))?;
+        let mut perms = fs::metadata(&tmp).map_err(|e| e.to_string())?.permissions();
+        perms.set_mode(0o755);
+        fs::set_permissions(&tmp, perms).map_err(|e| e.to_string())?;
+        fs::rename(&tmp, &target).map_err(|e| format!("Falha ao trocar o AppImage: {}", e))?;
+        let _ = fs::remove_file(&payload);
+        Ok("restart".into())
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Desinstalar / atalhos de menu
 // ---------------------------------------------------------------------------
 
@@ -970,6 +1032,7 @@ pub fn run() {
             get_latest_release,
             install_app,
             uninstall_app,
+            update_self,
             recreate_shortcuts,
             launch_app,
             apply_associations,

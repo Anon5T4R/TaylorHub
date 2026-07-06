@@ -104,6 +104,22 @@ body {
   border-color: var(--err);
 }
 
+.hub-banner.update {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+}
+
+.hub-banner.update button {
+  padding: 5px 14px;
+  border-radius: 8px;
+  border: 1px solid var(--accent);
+  background: var(--accent);
+  color: #fff;
+  cursor: pointer;
+  font-size: 13px;
+}
+
 .hub-grid-wrap {
   flex: 1;
   display: flex;
@@ -164,6 +180,11 @@ body {
   font-size: 20px;
   font-weight: 700;
   flex: 0 0 auto;
+}
+
+.avatar-img {
+  object-fit: contain;
+  background: transparent;
 }
 
 .card h2 {

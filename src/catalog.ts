@@ -70,7 +70,7 @@ export const CATALOG: CatalogApp[] = [
       "py", "go", "md", "html",
     ],
     accent: "#7c3aed",
-    iconUrl: "https://raw.githubusercontent.com/Anon5T4R/LocalCode/master/src-tauri/icons/128x128.png",
+    iconUrl: "https://raw.githubusercontent.com/Anon5T4R/LocalCode/master/src-tauri/icons/icon_128x128.png",
   },
   {
     id: "taylormind",

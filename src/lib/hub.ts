@@ -75,6 +75,18 @@ export async function uninstallApp(app: CatalogApp, info: InstalledInfo): Promis
   });
 }
 
+export const HUB_REPO = "Anon5T4R/TaylorHub";
+
+/** Atualiza o próprio Hub. Retorna "closing" (Windows, o app fecha sozinho) ou "restart" (Linux). */
+export async function updateSelf(os: string): Promise<string> {
+  return invoke<string>("update_self", {
+    spec: {
+      repo: HUB_REPO,
+      assetPattern: os === "windows" ? "*_x64-setup.exe" : "*_amd64.AppImage",
+    },
+  });
+}
+
 export async function recreateShortcuts(
   entries: { id: string; name: string; exe: string }[],
 ): Promise<string[]> {

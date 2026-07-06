@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
+import { getVersion } from "@tauri-apps/api/app";
 import { CATALOG, compareVersions, extensionRoutes, type CatalogApp } from "./catalog";
 import {
   applyAssociations,
@@ -9,9 +10,11 @@ import {
   installApp,
   launchApp,
   onProgress,
+  HUB_REPO,
   readDispatch,
   recreateShortcuts,
   uninstallApp,
+  updateSelf,
   type AssocEntry,
   type InstalledInfo,
   type Progress,
@@ -26,6 +29,26 @@ function fmtBytes(n: number): string {
   return `${(n / 1_000).toFixed(0)} KB`;
 }
 
+/** Ícone real do app (raw do GitHub); cai pra letra inicial se offline/404. */
+function AppAvatar({ app }: { app: CatalogApp }) {
+  const [broken, setBroken] = useState(false);
+  if (app.iconUrl && !broken) {
+    return (
+      <img
+        className="avatar avatar-img"
+        src={app.iconUrl}
+        alt=""
+        onError={() => setBroken(true)}
+      />
+    );
+  }
+  return (
+    <span className="avatar" style={{ background: app.accent }}>
+      {app.name[0]}
+    </span>
+  );
+}
+
 export default function App() {
   const tauri = inTauri();
   const [tab, setTab] = useState<Tab>("apps");
@@ -38,6 +61,8 @@ export default function App() {
   const [routes, setRoutes] = useState<Record<string, string>>({});
   const [assocMsg, setAssocMsg] = useState<string>("");
   const [shortcutMsg, setShortcutMsg] = useState<string>("");
+  const [hubUpdate, setHubUpdate] = useState<{ current: string; latest: string } | null>(null);
+  const [hubUpdateMsg, setHubUpdateMsg] = useState<string>("");
 
   const routeOptions = useMemo(() => extensionRoutes(), []);
 
@@ -80,6 +105,16 @@ export default function App() {
             setLatest((prev) => ({ ...prev, [app.id]: rel }));
           }),
         );
+        // Update do PRÓPRIO Hub: só avisa; aplicar exige clique do usuário.
+        try {
+          const current = await getVersion();
+          const rel = await getLatestRelease(HUB_REPO);
+          if (compareVersions(rel.version, current) > 0) {
+            setHubUpdate({ current, latest: rel.version });
+          }
+        } catch {
+          /* sem internet/release — segue o baile */
+        }
       } catch (e) {
         setErrors((prev) => ({ ...prev, _global: String(e) }));
       }
@@ -135,6 +170,28 @@ export default function App() {
       setErrors((prev) => ({ ...prev, [app.id]: String(e) }));
     } finally {
       setBusy((b) => ({ ...b, [app.id]: false }));
+    }
+  };
+
+  const doUpdateSelf = async () => {
+    if (!hubUpdate) return;
+    const ok = window.confirm(
+      `Atualizar o TaylorHub de v${hubUpdate.current} para v${hubUpdate.latest}?\n\n` +
+        (os === "windows"
+          ? "O Hub vai baixar a nova versão, fechar e se reinstalar sozinho."
+          : "O Hub vai substituir o próprio AppImage; depois é só reabrir."),
+    );
+    if (!ok) return;
+    setHubUpdateMsg("Baixando atualização…");
+    try {
+      const result = await updateSelf(os);
+      setHubUpdateMsg(
+        result === "restart"
+          ? "Atualizado! Feche e reabra o Hub."
+          : "Instalando — o Hub vai fechar…",
+      );
+    } catch (e) {
+      setHubUpdateMsg(`Erro: ${e}`);
     }
   };
 
@@ -211,6 +268,17 @@ export default function App() {
         </div>
       )}
       {errors._global && <div className="hub-banner error">{errors._global}</div>}
+      {hubUpdate && (
+        <div className="hub-banner update">
+          <span>
+            Nova versão do Hub disponível: v{hubUpdate.latest} (você está na v{hubUpdate.current}).
+          </span>
+          <button className="primary" onClick={doUpdateSelf}>
+            Atualizar o Hub
+          </button>
+          {hubUpdateMsg && <span className="assoc-msg">{hubUpdateMsg}</span>}
+        </div>
+      )}
 
       {tab === "apps" && (
         <main className="hub-grid-wrap">
@@ -236,9 +304,7 @@ export default function App() {
             return (
               <div className="card" key={app.id} style={{ borderTopColor: app.accent }}>
                 <div className="card-head">
-                  <span className="avatar" style={{ background: app.accent }}>
-                    {app.name[0]}
-                  </span>
+                  <AppAvatar app={app} />
                   <div>
                     <h2>{app.name}</h2>
                     <div className="version">
