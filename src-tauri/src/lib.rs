@@ -63,6 +63,35 @@ pub struct InstalledInfo {
     version: String,
     location: String,
     exe: String,
+    /// De onde veio a detecção: "registry" (Windows), "hub" (installed.json),
+    /// "appimage" (achado em ~/Applications), "deb" (dpkg). Vazio = não instalado.
+    source: String,
+}
+
+/// Extrai "0.14.6" de nomes tipo "LocalOffice_0.14.6_amd64.AppImage" / "OpenObsidian-0.7.1.AppImage".
+/// Exige pelo menos dois grupos numéricos ("2" sozinho não é versão).
+fn version_from_filename(name: &str) -> Option<String> {
+    fn validate(cur: &mut String) -> Option<String> {
+        let v = cur.trim_matches('.').to_string();
+        cur.clear();
+        let parts: Vec<&str> = v.split('.').collect();
+        if parts.len() >= 2
+            && parts.iter().all(|p| !p.is_empty() && p.chars().all(|c| c.is_ascii_digit()))
+        {
+            Some(v)
+        } else {
+            None
+        }
+    }
+    let mut cur = String::new();
+    for c in name.chars() {
+        if c.is_ascii_digit() || c == '.' {
+            cur.push(c);
+        } else if let Some(v) = validate(&mut cur) {
+            return Some(v);
+        }
+    }
+    validate(&mut cur)
 }
 
 /// Registro de instalações feitas pelo Hub no Linux (AppImages não têm registro).
@@ -129,14 +158,76 @@ fn detect_one(spec: &DetectSpec) -> InstalledInfo {
                 version,
                 location,
                 exe: exe_path,
+                source: "registry".into(),
             };
         }
     }
     InstalledInfo { id: spec.id.clone(), ..Default::default() }
 }
 
+/// Varre ~/Applications por um AppImage cujo nome começa com o nome do app
+/// (pega instalação feita por fora do Hub). Retorna (versão-do-nome, caminho).
+#[cfg(not(windows))]
+fn scan_appimages(name: &str) -> Option<(String, String)> {
+    let home = std::env::var("HOME").ok()?;
+    let dir = PathBuf::from(home).join("Applications");
+    let prefix = name.to_lowercase();
+    for entry in fs::read_dir(dir).ok()?.flatten() {
+        let fname = entry.file_name().to_string_lossy().to_string();
+        let lower = fname.to_lowercase();
+        if lower.ends_with(".appimage") && lower.starts_with(&prefix) {
+            let version = version_from_filename(&fname).unwrap_or_default();
+            return Some((version, entry.path().to_string_lossy().to_string()));
+        }
+    }
+    None
+}
+
+/// Procura o app no dpkg (instalado via .deb). Casa o nome do pacote
+/// normalizado ("open-obsidian" ≈ "OpenObsidian"). Retorna (versão, exe).
+#[cfg(not(windows))]
+fn dpkg_detect(name: &str) -> Option<(String, String)> {
+    fn norm(s: &str) -> String {
+        s.chars().filter(|c| c.is_ascii_alphanumeric()).collect::<String>().to_lowercase()
+    }
+    let out = Command::new("dpkg-query")
+        .args(["-W", "-f", "${Package}\\t${Version}\\n"])
+        .output()
+        .ok()?;
+    if !out.status.success() {
+        return None;
+    }
+    let target = norm(name);
+    let text = String::from_utf8_lossy(&out.stdout);
+    for line in text.lines() {
+        let mut cols = line.split('\t');
+        let pkg = cols.next()?;
+        let raw_ver = cols.next().unwrap_or("");
+        if norm(pkg) != target {
+            continue;
+        }
+        // "1:0.7.1-1" → sem epoch, sem revision debian.
+        let ver = raw_ver.split(':').next_back().unwrap_or(raw_ver);
+        let ver = ver.split('-').next().unwrap_or(ver).to_string();
+        let exe = Command::new("dpkg")
+            .args(["-L", pkg])
+            .output()
+            .ok()
+            .and_then(|o| {
+                String::from_utf8_lossy(&o.stdout)
+                    .lines()
+                    .find(|l| l.starts_with("/usr/bin/"))
+                    .map(|s| s.to_string())
+            })
+            .unwrap_or_default();
+        return Some((ver, exe));
+    }
+    None
+}
+
 #[cfg(not(windows))]
 fn detect_one(spec: &DetectSpec) -> InstalledInfo {
+    // 1) Instalado pelo Hub (installed.json)
     let installs: LinuxInstalls = read_json(&linux_installs_path()).unwrap_or_default();
     if let Some(found) = installs.0.get(&spec.id) {
         if Path::new(&found.path).exists() {
@@ -149,10 +240,37 @@ fn detect_one(spec: &DetectSpec) -> InstalledInfo {
                     .map(|p| p.to_string_lossy().to_string())
                     .unwrap_or_default(),
                 exe: found.path.clone(),
+                source: "hub".into(),
             };
         }
     }
-    let _ = &spec.exe; // exe só é usado no Windows
+    // 2) AppImage instalado por fora, em ~/Applications
+    if let Some((version, path)) = scan_appimages(&spec.name) {
+        return InstalledInfo {
+            id: spec.id.clone(),
+            installed: true,
+            version,
+            location: Path::new(&path)
+                .parent()
+                .map(|p| p.to_string_lossy().to_string())
+                .unwrap_or_default(),
+            exe: path,
+            source: "appimage".into(),
+        };
+    }
+    // 3) .deb via dpkg (alternativa pra quem não curte AppImage — o Hub só
+    //    mostra/abre; atualizar/remover fica com o apt)
+    if let Some((version, exe)) = dpkg_detect(&spec.name) {
+        return InstalledInfo {
+            id: spec.id.clone(),
+            installed: true,
+            version,
+            location: String::new(),
+            exe,
+            source: "deb".into(),
+        };
+    }
+    let _ = &spec.exe; // exe do catálogo só é usado no Windows
     InstalledInfo { id: spec.id.clone(), ..Default::default() }
 }
 
@@ -261,6 +379,7 @@ fn glob_match(pattern: &str, name: &str) -> bool {
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
+#[cfg_attr(windows, allow(dead_code))] // current_path/icon_url são Linux-only
 pub struct InstallSpec {
     id: String,
     name: String,
@@ -270,6 +389,12 @@ pub struct InstallSpec {
     /// Args de instalação silenciosa no Windows (ex.: ["/S"]).
     silent_args: Vec<String>,
     exe: String,
+    /// Linux: caminho do AppImage já instalado (update sobrescreve NO MESMO lugar).
+    #[serde(default)]
+    current_path: Option<String>,
+    /// PNG do ícone (raw do GitHub) pro atalho .desktop no Linux.
+    #[serde(default)]
+    icon_url: Option<String>,
 }
 
 #[derive(Serialize, Clone)]
@@ -338,30 +463,62 @@ fn install_payload(spec: &InstallSpec, payload: &Path) -> Result<(), String> {
 }
 
 #[cfg(not(windows))]
-fn install_payload(spec: &InstallSpec, payload: &Path) -> Result<(), String> {
-    // Linux: AppImage → ~/Applications/<Name>.AppImage + .desktop + installed.json
+fn linux_icon_path(id: &str) -> Option<PathBuf> {
+    let home = std::env::var("HOME").ok()?;
+    Some(PathBuf::from(home).join(format!(".local/share/icons/taylor-{}.png", id)))
+}
+
+/// Cria/atualiza a entrada de menu (~/.local/share/applications/taylor-<id>.desktop).
+#[cfg(not(windows))]
+fn write_desktop_entry(id: &str, name: &str, exec: &str) -> Result<(), String> {
+    let home = PathBuf::from(std::env::var("HOME").map_err(|_| "HOME não definido".to_string())?);
+    let desktop_dir = home.join(".local/share/applications");
+    ensure_dir(&desktop_dir)?;
+    let icon_line = linux_icon_path(id)
+        .filter(|p| p.exists())
+        .map(|p| format!("Icon={}\n", p.display()))
+        .unwrap_or_default();
+    let desktop = format!(
+        "[Desktop Entry]\nType=Application\nName={}\nExec=\"{}\" %f\n{}Terminal=false\nCategories=Office;\n",
+        name, exec, icon_line
+    );
+    fs::write(desktop_dir.join(format!("taylor-{}.desktop", id)), desktop)
+        .map_err(|e| e.to_string())?;
+    let _ = Command::new("update-desktop-database").arg(&desktop_dir).status();
+    Ok(())
+}
+
+#[cfg(not(windows))]
+fn install_payload(spec: &InstallSpec, payload: &Path, icon: Option<&[u8]>) -> Result<PathBuf, String> {
+    // Linux: AppImage → mesmo caminho do já instalado (update in-place) ou
+    // ~/Applications/<Name>.AppImage + .desktop com ícone + installed.json
     use std::os::unix::fs::PermissionsExt;
     let home = PathBuf::from(std::env::var("HOME").map_err(|_| "HOME não definido".to_string())?);
-    let apps_dir = home.join("Applications");
-    ensure_dir(&apps_dir)?;
-    let dest = apps_dir.join(format!("{}.AppImage", spec.name));
+    let dest = match &spec.current_path {
+        Some(p) if !p.is_empty() && Path::new(p).parent().map(|d| d.exists()).unwrap_or(false) => {
+            PathBuf::from(p)
+        }
+        _ => {
+            let apps_dir = home.join("Applications");
+            ensure_dir(&apps_dir)?;
+            apps_dir.join(format!("{}.AppImage", spec.name))
+        }
+    };
     fs::copy(payload, &dest).map_err(|e| format!("Falha ao copiar AppImage: {}", e))?;
     let mut perms = fs::metadata(&dest).map_err(|e| e.to_string())?.permissions();
     perms.set_mode(0o755);
     fs::set_permissions(&dest, perms).map_err(|e| e.to_string())?;
 
-    // Entrada de menu
-    let desktop_dir = home.join(".local/share/applications");
-    ensure_dir(&desktop_dir)?;
-    let desktop = format!(
-        "[Desktop Entry]\nType=Application\nName={}\nExec=\"{}\" %f\nTerminal=false\nCategories=Office;\n",
-        spec.name,
-        dest.display()
-    );
-    fs::write(desktop_dir.join(format!("taylor-{}.desktop", spec.id)), desktop)
-        .map_err(|e| e.to_string())?;
-    let _ = Command::new("update-desktop-database").arg(&desktop_dir).status();
-    Ok(())
+    // Ícone do menu (best-effort)
+    if let (Some(bytes), Some(icon_path)) = (icon, linux_icon_path(&spec.id)) {
+        if let Some(parent) = icon_path.parent() {
+            let _ = ensure_dir(parent);
+        }
+        let _ = fs::write(&icon_path, bytes);
+    }
+
+    write_desktop_entry(&spec.id, &spec.name, &dest.to_string_lossy())?;
+    Ok(dest)
 }
 
 #[tauri::command]
@@ -386,24 +543,34 @@ async fn install_app(app: tauri::AppHandle, spec: InstallSpec) -> Result<Install
         Progress { id: spec.id.clone(), phase: "install".into(), done: 0, total: 0 },
     );
 
+    // Ícone pro atalho .desktop (Linux, best-effort — 404/offline não travam o install).
+    #[cfg(not(windows))]
+    let icon_bytes: Option<Vec<u8>> = match spec.icon_url.as_deref() {
+        Some(url) if !url.is_empty() => match http_client()?.get(url).send().await {
+            Ok(resp) if resp.status().is_success() => resp.bytes().await.ok().map(|b| b.to_vec()),
+            _ => None,
+        },
+        _ => None,
+    };
+
     // Instalação roda processo bloqueante → thread própria.
     let version = release.version.clone();
     let info = tauri::async_runtime::spawn_blocking(move || -> Result<InstalledInfo, String> {
+        #[cfg(windows)]
         install_payload(&spec, &payload)?;
-        let _ = fs::remove_file(&payload);
-
         #[cfg(not(windows))]
         {
+            let dest = install_payload(&spec, &payload, icon_bytes.as_deref())?;
             // Registrar no installed.json (Linux não tem registro).
             let path = linux_installs_path();
             let mut installs: LinuxInstalls = read_json(&path).unwrap_or_default();
-            let home = std::env::var("HOME").unwrap_or_default();
-            let dest = format!("{}/Applications/{}.AppImage", home, spec.name);
-            installs
-                .0
-                .insert(spec.id.clone(), LinuxInstall { version: version.clone(), path: dest });
+            installs.0.insert(
+                spec.id.clone(),
+                LinuxInstall { version: version.clone(), path: dest.to_string_lossy().to_string() },
+            );
             write_json(&path, &installs)?;
         }
+        let _ = fs::remove_file(&payload);
 
         let detected = detect_one(&DetectSpec {
             id: spec.id.clone(),
@@ -420,6 +587,7 @@ async fn install_app(app: tauri::AppHandle, spec: InstallSpec) -> Result<Install
                 version,
                 location: String::new(),
                 exe: String::new(),
+                source: String::new(),
             })
         }
     })
@@ -427,6 +595,148 @@ async fn install_app(app: tauri::AppHandle, spec: InstallSpec) -> Result<Install
     .map_err(|e| format!("Falha na thread de instalação: {}", e))??;
 
     Ok(info)
+}
+
+// ---------------------------------------------------------------------------
+// Desinstalar / atalhos de menu
+// ---------------------------------------------------------------------------
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+#[cfg_attr(windows, allow(dead_code))]
+pub struct UninstallSpec {
+    id: String,
+    name: String,
+    exe: String,
+    source: String,
+}
+
+#[cfg(windows)]
+fn uninstall_os(spec: &UninstallSpec) -> Result<(), String> {
+    use winreg::enums::{HKEY_CURRENT_USER, HKEY_LOCAL_MACHINE};
+    use winreg::RegKey;
+    let hives: [(winreg::HKEY, &str); 3] = [
+        (HKEY_CURRENT_USER, r"Software\Microsoft\Windows\CurrentVersion\Uninstall"),
+        (HKEY_LOCAL_MACHINE, r"Software\Microsoft\Windows\CurrentVersion\Uninstall"),
+        (HKEY_LOCAL_MACHINE, r"Software\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall"),
+    ];
+    for (hive, path) in hives {
+        let root = RegKey::predef(hive);
+        let Ok(unin) = root.open_subkey(path) else { continue };
+        for key in unin.enum_keys().flatten() {
+            let Ok(sub) = unin.open_subkey(&key) else { continue };
+            let dn: String = sub.get_value("DisplayName").unwrap_or_default();
+            if dn != spec.name && !dn.starts_with(&format!("{} ", spec.name)) {
+                continue;
+            }
+            let quiet: String = sub.get_value("QuietUninstallString").unwrap_or_default();
+            let normal: String = sub.get_value("UninstallString").unwrap_or_default();
+            let (cmdline, add_silent) =
+                if !quiet.is_empty() { (quiet, false) } else { (normal, true) };
+            if cmdline.is_empty() {
+                return Err(format!("{}: sem UninstallString no registro", spec.name));
+            }
+            // "C:\...\uninstall.exe" [args] → separa programa e args.
+            let (prog, rest) = if let Some(stripped) = cmdline.strip_prefix('"') {
+                let end = stripped.find('"').unwrap_or(stripped.len());
+                (stripped[..end].to_string(), stripped[end + 1..].trim().to_string())
+            } else {
+                match cmdline.split_once(' ') {
+                    Some((p, r)) => (p.to_string(), r.trim().to_string()),
+                    None => (cmdline.clone(), String::new()),
+                }
+            };
+            let mut cmd = Command::new(&prog);
+            if !rest.is_empty() {
+                for a in rest.split_whitespace() {
+                    cmd.arg(a);
+                }
+            }
+            if add_silent {
+                cmd.arg("/S");
+            }
+            let status = cmd.status().map_err(|e| format!("Falha no desinstalador: {}", e))?;
+            if !status.success() {
+                return Err(format!("Desinstalador saiu com código {:?}", status.code()));
+            }
+            // NSIS costuma se re-executar de um temp e devolver na hora — dá um respiro
+            // antes do frontend re-detectar.
+            std::thread::sleep(std::time::Duration::from_millis(2500));
+            return Ok(());
+        }
+    }
+    Err(format!("{}: não encontrado no registro", spec.name))
+}
+
+#[cfg(not(windows))]
+fn uninstall_os(spec: &UninstallSpec) -> Result<(), String> {
+    if spec.source == "deb" {
+        return Err(format!(
+            "{} foi instalado via .deb — remova com o gerenciador de pacotes (ex.: sudo apt remove).",
+            spec.name
+        ));
+    }
+    if !spec.exe.is_empty() && Path::new(&spec.exe).exists() {
+        fs::remove_file(&spec.exe).map_err(|e| format!("Falha ao remover AppImage: {}", e))?;
+    }
+    if let Ok(home) = std::env::var("HOME") {
+        let desktop = PathBuf::from(&home)
+            .join(format!(".local/share/applications/taylor-{}.desktop", spec.id));
+        let _ = fs::remove_file(desktop);
+        if let Some(icon) = linux_icon_path(&spec.id) {
+            let _ = fs::remove_file(icon);
+        }
+        let _ = Command::new("update-desktop-database")
+            .arg(PathBuf::from(&home).join(".local/share/applications"))
+            .status();
+    }
+    // Tira do installed.json
+    let path = linux_installs_path();
+    let mut installs: LinuxInstalls = read_json(&path).unwrap_or_default();
+    installs.0.remove(&spec.id);
+    write_json(&path, &installs)?;
+    Ok(())
+}
+
+#[tauri::command]
+async fn uninstall_app(spec: UninstallSpec) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || uninstall_os(&spec))
+        .await
+        .map_err(|e| format!("Falha na thread de desinstalação: {}", e))?
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+#[cfg_attr(windows, allow(dead_code))]
+pub struct ShortcutEntry {
+    id: String,
+    name: String,
+    exe: String,
+}
+
+/// Linux: (re)cria as entradas de menu .desktop dos apps instalados.
+/// No Windows é no-op (o instalador NSIS já cria os atalhos).
+#[tauri::command]
+fn recreate_shortcuts(entries: Vec<ShortcutEntry>) -> Vec<String> {
+    #[cfg(windows)]
+    {
+        let _ = entries;
+        Vec::new()
+    }
+    #[cfg(not(windows))]
+    {
+        let mut warnings = Vec::new();
+        for e in &entries {
+            if e.exe.is_empty() || !Path::new(&e.exe).exists() {
+                warnings.push(format!("{}: executável não encontrado", e.name));
+                continue;
+            }
+            if let Err(err) = write_desktop_entry(&e.id, &e.name, &e.exe) {
+                warnings.push(format!("{}: {}", e.name, err));
+            }
+        }
+        warnings
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -659,6 +969,8 @@ pub fn run() {
             get_os,
             get_latest_release,
             install_app,
+            uninstall_app,
+            recreate_shortcuts,
             launch_app,
             apply_associations,
             read_dispatch
@@ -669,7 +981,16 @@ pub fn run() {
 
 #[cfg(test)]
 mod tests {
-    use super::glob_match;
+    use super::{glob_match, version_from_filename};
+
+    #[test]
+    fn version_from_names() {
+        assert_eq!(version_from_filename("LocalOffice_0.14.6_amd64.AppImage").as_deref(), Some("0.14.6"));
+        assert_eq!(version_from_filename("OpenObsidian-0.7.1.AppImage").as_deref(), Some("0.7.1"));
+        assert_eq!(version_from_filename("TaylorMind-0.1.0.AppImage").as_deref(), Some("0.1.0"));
+        assert_eq!(version_from_filename("LocalSheets.AppImage"), None);
+        assert_eq!(version_from_filename("App2.AppImage"), None); // "2" sozinho não é versão
+    }
 
     #[test]
     fn glob_basics() {

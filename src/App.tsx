@@ -10,6 +10,8 @@ import {
   launchApp,
   onProgress,
   readDispatch,
+  recreateShortcuts,
+  uninstallApp,
   type AssocEntry,
   type InstalledInfo,
   type Progress,
@@ -35,6 +37,7 @@ export default function App() {
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [routes, setRoutes] = useState<Record<string, string>>({});
   const [assocMsg, setAssocMsg] = useState<string>("");
+  const [shortcutMsg, setShortcutMsg] = useState<string>("");
 
   const routeOptions = useMemo(() => extensionRoutes(), []);
 
@@ -89,7 +92,13 @@ export default function App() {
     setBusy((b) => ({ ...b, [app.id]: true }));
     setErrors((e) => ({ ...e, [app.id]: "" }));
     try {
-      const info = await installApp(app, os);
+      // Linux: se já existe um AppImage (mesmo instalado por fora), atualiza NO MESMO caminho.
+      const current = installed[app.id];
+      const currentPath =
+        os !== "windows" && current?.installed && current.source !== "deb"
+          ? current.exe
+          : undefined;
+      const info = await installApp(app, os, currentPath);
       setInstalled((prev) => ({ ...prev, [app.id]: info }));
     } catch (e) {
       setErrors((prev) => ({ ...prev, [app.id]: String(e) }));
@@ -110,6 +119,42 @@ export default function App() {
       await launchApp(info.exe);
     } catch (e) {
       setErrors((prev) => ({ ...prev, [app.id]: String(e) }));
+    }
+  };
+
+  const doUninstall = async (app: CatalogApp) => {
+    const info = installed[app.id];
+    if (!info?.installed) return;
+    if (!window.confirm(`Desinstalar ${app.name}?`)) return;
+    setBusy((b) => ({ ...b, [app.id]: true }));
+    setErrors((e) => ({ ...e, [app.id]: "" }));
+    try {
+      await uninstallApp(app, info);
+      await refreshInstalled();
+    } catch (e) {
+      setErrors((prev) => ({ ...prev, [app.id]: String(e) }));
+    } finally {
+      setBusy((b) => ({ ...b, [app.id]: false }));
+    }
+  };
+
+  const doRecreateShortcuts = async () => {
+    const entries = CATALOG.filter(
+      (a) => installed[a.id]?.installed && installed[a.id].source !== "deb" && installed[a.id].exe,
+    ).map((a) => ({ id: a.id, name: a.name, exe: installed[a.id].exe }));
+    if (!entries.length) {
+      setShortcutMsg("Nenhum app instalado (AppImage) pra criar atalho.");
+      return;
+    }
+    try {
+      const warnings = await recreateShortcuts(entries);
+      setShortcutMsg(
+        warnings.length
+          ? `Atalhos com avisos: ${warnings.join("; ")}`
+          : `Atalhos de menu recriados (${entries.length} apps).`,
+      );
+    } catch (e) {
+      setShortcutMsg(`Erro: ${e}`);
     }
   };
 
@@ -168,12 +213,24 @@ export default function App() {
       {errors._global && <div className="hub-banner error">{errors._global}</div>}
 
       {tab === "apps" && (
-        <main className="hub-grid">
+        <main className="hub-grid-wrap">
+          {os === "linux" && (
+            <div className="linux-bar">
+              <button onClick={doRecreateShortcuts}>Recriar atalhos do menu</button>
+              {shortcutMsg && <span className="assoc-msg">{shortcutMsg}</span>}
+            </div>
+          )}
+          <div className="hub-grid">
           {CATALOG.map((app) => {
             const info = installed[app.id];
             const rel = latest[app.id];
+            const isDeb = info?.source === "deb";
             const hasUpdate =
-              info?.installed && rel && compareVersions(rel.version, info.version) > 0;
+              info?.installed &&
+              !isDeb &&
+              rel &&
+              !!info.version &&
+              compareVersions(rel.version, info.version) > 0;
             const prog = progress[app.id];
             const isBusy = !!busy[app.id];
             return (
@@ -188,6 +245,7 @@ export default function App() {
                       {info?.installed ? (
                         <>
                           v{info.version || "?"}
+                          {isDeb && <span className="badge deb">via .deb</span>}
                           {hasUpdate && <span className="badge">v{rel!.version} disponível</span>}
                         </>
                       ) : (
@@ -235,10 +293,25 @@ export default function App() {
                       Abrir
                     </button>
                   )}
+                  {info?.installed && !isDeb && (
+                    <button
+                      className="danger"
+                      disabled={isBusy}
+                      onClick={() => doUninstall(app)}
+                    >
+                      Desinstalar
+                    </button>
+                  )}
                 </div>
+                {isDeb && (
+                  <div className="deb-hint">
+                    Instalado pelo gerenciador de pacotes — atualize/remova com o apt.
+                  </div>
+                )}
               </div>
             );
           })}
+          </div>
         </main>
       )}
 

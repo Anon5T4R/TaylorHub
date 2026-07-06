@@ -12,6 +12,8 @@ export interface CatalogApp {
   exe: string; // executável pós-instalação (Windows)
   extensions: string[]; // extensões que este app atende
   accent: string; // cor do card/avatar
+  /** PNG do ícone (raw do GitHub) — usado no atalho .desktop do Linux. */
+  iconUrl?: string;
 }
 
 export const CATALOG: CatalogApp[] = [
@@ -26,6 +28,7 @@ export const CATALOG: CatalogApp[] = [
     exe: "LocalOffice.exe",
     extensions: ["md", "markdown", "txt", "docx", "odt", "rtf", "html", "htm"],
     accent: "#2563eb",
+    iconUrl: "https://raw.githubusercontent.com/Anon5T4R/LocalOffice/main/src-tauri/icons/128x128.png",
   },
   {
     id: "sheets",
@@ -38,6 +41,7 @@ export const CATALOG: CatalogApp[] = [
     exe: "LocalSheets.exe",
     extensions: ["xlsx", "csv"],
     accent: "#16a34a",
+    iconUrl: "https://raw.githubusercontent.com/Anon5T4R/LocalSheets/main/src-tauri/icons/128x128.png",
   },
   {
     id: "slides",
@@ -50,6 +54,7 @@ export const CATALOG: CatalogApp[] = [
     exe: "LocalSlides.exe",
     extensions: ["tslides", "pptx"],
     accent: "#0891b2",
+    iconUrl: "https://raw.githubusercontent.com/Anon5T4R/LocalSlides/main/src-tauri/icons/128x128.png",
   },
   {
     id: "code",
@@ -65,6 +70,7 @@ export const CATALOG: CatalogApp[] = [
       "py", "go", "md", "html",
     ],
     accent: "#7c3aed",
+    iconUrl: "https://raw.githubusercontent.com/Anon5T4R/LocalCode/master/src-tauri/icons/128x128.png",
   },
   {
     id: "taylormind",
@@ -77,6 +83,7 @@ export const CATALOG: CatalogApp[] = [
     exe: "TaylorMind.exe",
     extensions: ["tmind"],
     accent: "#ea580c",
+    iconUrl: "https://raw.githubusercontent.com/Anon5T4R/TaylorMind/main/build/icon.png",
   },
   {
     id: "openobsidian",
@@ -89,6 +96,7 @@ export const CATALOG: CatalogApp[] = [
     exe: "OpenObsidian.exe",
     extensions: [],
     accent: "#9333ea",
+    iconUrl: "https://raw.githubusercontent.com/Anon5T4R/OpenObsidian/master/resources/icon.png",
   },
 ];
 

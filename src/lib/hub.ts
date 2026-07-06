@@ -12,6 +12,8 @@ export interface InstalledInfo {
   version: string;
   location: string;
   exe: string;
+  /** "registry" (Windows) | "hub" | "appimage" (achado em ~/Applications) | "deb" (dpkg) */
+  source: string;
 }
 
 export interface ReleaseInfo {
@@ -48,7 +50,11 @@ export async function getLatestRelease(repo: string): Promise<ReleaseInfo> {
   return invoke<ReleaseInfo>("get_latest_release", { repo });
 }
 
-export async function installApp(app: CatalogApp, os: string): Promise<InstalledInfo> {
+export async function installApp(
+  app: CatalogApp,
+  os: string,
+  currentPath?: string,
+): Promise<InstalledInfo> {
   return invoke<InstalledInfo>("install_app", {
     spec: {
       id: app.id,
@@ -57,8 +63,22 @@ export async function installApp(app: CatalogApp, os: string): Promise<Installed
       assetPattern: os === "windows" ? app.assets.win : app.assets.linux,
       silentArgs: app.silentArgs,
       exe: app.exe,
+      currentPath: currentPath ?? null,
+      iconUrl: app.iconUrl ?? null,
     },
   });
+}
+
+export async function uninstallApp(app: CatalogApp, info: InstalledInfo): Promise<void> {
+  return invoke("uninstall_app", {
+    spec: { id: app.id, name: app.name, exe: info.exe, source: info.source },
+  });
+}
+
+export async function recreateShortcuts(
+  entries: { id: string; name: string; exe: string }[],
+): Promise<string[]> {
+  return invoke<string[]>("recreate_shortcuts", { entries });
 }
 
 export async function launchApp(exe: string, file?: string): Promise<void> {
