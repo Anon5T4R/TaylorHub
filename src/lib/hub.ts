@@ -108,3 +108,29 @@ export async function readDispatch(): Promise<AssocEntry[]> {
 export function onProgress(cb: (p: Progress) => void): Promise<UnlistenFn> {
   return listen<Progress>("hub-progress", (e) => cb(e.payload));
 }
+
+export interface RecentEntry {
+  path: string;
+  ts: number;
+  pinned: boolean;
+}
+
+export async function readRecents(): Promise<RecentEntry[]> {
+  return invoke<RecentEntry[]>("read_recents");
+}
+
+export async function setRecentPinned(path: string, pinned: boolean): Promise<RecentEntry[]> {
+  return invoke<RecentEntry[]>("set_recent_pinned", { path, pinned });
+}
+
+export async function removeRecent(path: string): Promise<RecentEntry[]> {
+  return invoke<RecentEntry[]>("remove_recent", { path });
+}
+
+export async function clearRecents(): Promise<RecentEntry[]> {
+  return invoke<RecentEntry[]>("clear_recents");
+}
+
+export async function openRecent(path: string, exe: string): Promise<void> {
+  return invoke("open_recent", { path, exe });
+}

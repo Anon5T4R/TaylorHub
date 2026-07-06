@@ -10,11 +10,17 @@ import {
   installApp,
   launchApp,
   onProgress,
+  clearRecents,
   HUB_REPO,
+  openRecent,
   readDispatch,
+  readRecents,
   recreateShortcuts,
+  removeRecent,
+  setRecentPinned,
   uninstallApp,
   updateSelf,
+  type RecentEntry,
   type AssocEntry,
   type InstalledInfo,
   type Progress,
@@ -22,7 +28,32 @@ import {
 } from "./lib/hub";
 import "./App.css";
 
-type Tab = "apps" | "arquivos";
+type Tab = "apps" | "recentes" | "arquivos";
+
+function extOf(path: string): string {
+  const name = path.split(/[\\/]/).pop() ?? "";
+  const dot = name.lastIndexOf(".");
+  return dot > 0 ? name.slice(dot + 1).toLowerCase() : "";
+}
+
+function fileName(path: string): string {
+  return path.split(/[\\/]/).pop() ?? path;
+}
+
+function dirName(path: string): string {
+  const i = Math.max(path.lastIndexOf("\\"), path.lastIndexOf("/"));
+  return i > 0 ? path.slice(0, i) : "";
+}
+
+function timeAgo(ts: number): string {
+  if (!ts) return "";
+  const s = Math.floor(Date.now() / 1000) - ts;
+  if (s < 60) return "agora";
+  if (s < 3600) return `${Math.floor(s / 60)} min atrás`;
+  if (s < 86400) return `${Math.floor(s / 3600)} h atrás`;
+  if (s < 172800) return "ontem";
+  return new Date(ts * 1000).toLocaleDateString();
+}
 
 function fmtBytes(n: number): string {
   if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(0)} MB`;
@@ -63,6 +94,8 @@ export default function App() {
   const [shortcutMsg, setShortcutMsg] = useState<string>("");
   const [hubUpdate, setHubUpdate] = useState<{ current: string; latest: string } | null>(null);
   const [hubUpdateMsg, setHubUpdateMsg] = useState<string>("");
+  const [recents, setRecents] = useState<RecentEntry[]>([]);
+  const [recentsMsg, setRecentsMsg] = useState<string>("");
 
   const routeOptions = useMemo(() => extensionRoutes(), []);
 
@@ -86,6 +119,7 @@ export default function App() {
       try {
         setOs(await getOs());
         await refreshInstalled();
+        setRecents(await readRecents());
         // Rotas salvas anteriormente sobrescrevem os defaults.
         const saved = await readDispatch();
         if (saved.length) {
@@ -195,6 +229,44 @@ export default function App() {
     }
   };
 
+  /** App que abre este arquivo hoje (rota da extensão) — precisa estar instalado. */
+  const appForFile = (path: string): { app: CatalogApp; exe: string } | null => {
+    const ext = extOf(path);
+    const appId = routes[ext];
+    const app = CATALOG.find((a) => a.id === appId);
+    const info = installed[appId ?? ""];
+    if (!app || !info?.installed || !info.exe) return null;
+    return { app, exe: info.exe };
+  };
+
+  const doOpenRecent = async (entry: RecentEntry) => {
+    const target = appForFile(entry.path);
+    if (!target) {
+      setRecentsMsg(`Nenhum app instalado atende .${extOf(entry.path)} — veja a aba Associações.`);
+      return;
+    }
+    setRecentsMsg("");
+    try {
+      await openRecent(entry.path, target.exe);
+      setRecents(await readRecents());
+    } catch (e) {
+      setRecentsMsg(String(e));
+    }
+  };
+
+  const doTogglePin = async (entry: RecentEntry) => {
+    setRecents(await setRecentPinned(entry.path, !entry.pinned));
+  };
+
+  const doRemoveRecent = async (entry: RecentEntry) => {
+    setRecents(await removeRecent(entry.path));
+  };
+
+  const doClearRecents = async () => {
+    if (!window.confirm("Limpar a lista de recentes? (os fixados ficam)")) return;
+    setRecents(await clearRecents());
+  };
+
   const doRecreateShortcuts = async () => {
     const entries = CATALOG.filter(
       (a) => installed[a.id]?.installed && installed[a.id].source !== "deb" && installed[a.id].exe,
@@ -254,10 +326,19 @@ export default function App() {
             Apps
           </button>
           <button
+            className={tab === "recentes" ? "active" : ""}
+            onClick={() => {
+              setTab("recentes");
+              if (tauri) readRecents().then(setRecents);
+            }}
+          >
+            Recentes
+          </button>
+          <button
             className={tab === "arquivos" ? "active" : ""}
             onClick={() => setTab("arquivos")}
           >
-            Arquivos
+            Associações
           </button>
         </nav>
       </header>
@@ -378,6 +459,71 @@ export default function App() {
             );
           })}
           </div>
+        </main>
+      )}
+
+      {tab === "recentes" && (
+        <main className="hub-recents">
+          {recentsMsg && <div className="hub-banner error">{recentsMsg}</div>}
+          {recents.length === 0 && (
+            <p className="hint">
+              Nada por aqui ainda. Os arquivos que você abrir com duplo-clique (via associações do
+              Hub) aparecem nesta lista — e dá pra fixar os favoritos com a ☆.
+            </p>
+          )}
+          {(["fixados", "recentes"] as const).map((section) => {
+            const list = recents
+              .filter((e) => (section === "fixados" ? e.pinned : !e.pinned))
+              .sort((a, b) => b.ts - a.ts);
+            if (!list.length) return null;
+            return (
+              <section key={section}>
+                <h3>{section === "fixados" ? "★ Fixados" : "Recentes"}</h3>
+                <ul className="recent-list">
+                  {list.map((entry) => {
+                    const target = appForFile(entry.path);
+                    return (
+                      <li key={entry.path}>
+                        <span
+                          className="recent-dot"
+                          style={{ background: target?.app.accent ?? "var(--muted)" }}
+                          title={target?.app.name ?? "sem app associado"}
+                        />
+                        <button
+                          className="recent-name"
+                          title={entry.path}
+                          onClick={() => doOpenRecent(entry)}
+                        >
+                          {fileName(entry.path)}
+                        </button>
+                        <span className="recent-dir">{dirName(entry.path)}</span>
+                        <span className="recent-time">{timeAgo(entry.ts)}</span>
+                        <button
+                          className="recent-act"
+                          title={entry.pinned ? "Desafixar" : "Fixar"}
+                          onClick={() => doTogglePin(entry)}
+                        >
+                          {entry.pinned ? "★" : "☆"}
+                        </button>
+                        <button
+                          className="recent-act"
+                          title="Remover da lista"
+                          onClick={() => doRemoveRecent(entry)}
+                        >
+                          ✕
+                        </button>
+                      </li>
+                    );
+                  })}
+                </ul>
+              </section>
+            );
+          })}
+          {recents.some((e) => !e.pinned) && (
+            <button className="clear-recents" onClick={doClearRecents}>
+              Limpar recentes
+            </button>
+          )}
         </main>
       )}
 

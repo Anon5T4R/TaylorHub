@@ -979,6 +979,92 @@ fn apply_associations(entries: Vec<AssocEntry>) -> Result<Vec<String>, String> {
     Ok(apply_assoc_os(&entries))
 }
 
+// ---------------------------------------------------------------------------
+// Recentes / favoritos (alimentado pelo dispatcher e pela UI)
+// ---------------------------------------------------------------------------
+
+#[derive(Serialize, Deserialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct RecentEntry {
+    path: String,
+    ts: u64,
+    #[serde(default)]
+    pinned: bool,
+}
+
+fn recents_path() -> PathBuf {
+    config_dir().join("recents.json")
+}
+
+/// Registra um arquivo aberto: vai pro topo, preserva o "fixado",
+/// mantém todos os fixados + até 40 não fixados.
+fn log_recent(file: &str) {
+    let mut items: Vec<RecentEntry> = read_json(&recents_path()).unwrap_or_default();
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+    let pinned = items.iter().find(|e| e.path == file).map(|e| e.pinned).unwrap_or(false);
+    items.retain(|e| e.path != file);
+    items.insert(0, RecentEntry { path: file.to_string(), ts: now, pinned });
+    let mut unpinned = 0;
+    items.retain(|e| {
+        if e.pinned {
+            true
+        } else {
+            unpinned += 1;
+            unpinned <= 40
+        }
+    });
+    let _ = write_json(&recents_path(), &items);
+}
+
+#[tauri::command]
+fn read_recents() -> Vec<RecentEntry> {
+    read_json(&recents_path()).unwrap_or_default()
+}
+
+#[tauri::command]
+fn set_recent_pinned(path: String, pinned: bool) -> Result<Vec<RecentEntry>, String> {
+    let mut items: Vec<RecentEntry> = read_json(&recents_path()).unwrap_or_default();
+    for e in items.iter_mut() {
+        if e.path == path {
+            e.pinned = pinned;
+        }
+    }
+    write_json(&recents_path(), &items)?;
+    Ok(items)
+}
+
+#[tauri::command]
+fn remove_recent(path: String) -> Result<Vec<RecentEntry>, String> {
+    let mut items: Vec<RecentEntry> = read_json(&recents_path()).unwrap_or_default();
+    items.retain(|e| e.path != path);
+    write_json(&recents_path(), &items)?;
+    Ok(items)
+}
+
+/// Limpa os não fixados; os fixados ficam.
+#[tauri::command]
+fn clear_recents() -> Result<Vec<RecentEntry>, String> {
+    let mut items: Vec<RecentEntry> = read_json(&recents_path()).unwrap_or_default();
+    items.retain(|e| e.pinned);
+    write_json(&recents_path(), &items)?;
+    Ok(items)
+}
+
+/// Abre um recente com o app resolvido pelo frontend (rotas + instalados)
+/// e re-registra no topo da lista.
+#[tauri::command]
+fn open_recent(path: String, exe: String) -> Result<(), String> {
+    if !Path::new(&path).exists() {
+        return Err("O arquivo não existe mais nesse caminho.".into());
+    }
+    spawn_detached(&exe, Some(&path))?;
+    log_recent(&path);
+    Ok(())
+}
+
 /// Modo `taylorhub --open <arquivo>`: despacha pro app certo SEM abrir a UI.
 /// Retorna true se conseguiu despachar (o processo então termina).
 fn dispatch_open(file: &str) -> bool {
@@ -997,7 +1083,11 @@ fn dispatch_open(file: &str) -> bool {
     if entry.exe.is_empty() || !Path::new(&entry.exe).exists() {
         return false;
     }
-    spawn_detached(&entry.exe, Some(file)).is_ok()
+    let ok = spawn_detached(&entry.exe, Some(file)).is_ok();
+    if ok {
+        log_recent(file);
+    }
+    ok
 }
 
 // ---------------------------------------------------------------------------
@@ -1036,7 +1126,12 @@ pub fn run() {
             recreate_shortcuts,
             launch_app,
             apply_associations,
-            read_dispatch
+            read_dispatch,
+            read_recents,
+            set_recent_pinned,
+            remove_recent,
+            clear_recents,
+            open_recent
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
