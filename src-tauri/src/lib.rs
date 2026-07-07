@@ -633,18 +633,34 @@ async fn update_self(app: tauri::AppHandle, spec: SelfUpdateSpec) -> Result<Stri
             .to_string_lossy()
             .to_string();
         // O instalador não sobrescreve exe em uso: dispara com atraso e fecha o Hub.
-        // Delay via ping (NÃO usar `timeout`: ele exige stdin de console e, vindo de
-        // app GUI, falha na hora — o instalador rodava com o Hub ainda aberto e abortava).
-        // Depois de instalar com sucesso, reabre o Hub atualizado.
+        // Duas lições pagas aqui:
+        // 1. NÃO usar `timeout` como delay: exige stdin de console e, vindo de app
+        //    GUI, falha na hora — o instalador rodava com o Hub aberto e abortava.
+        // 2. NÃO passar linha de cmd com aspas internas via `Command::args`: o Rust
+        //    escapa `"` como `\"` (convenção do runtime C), mas o cmd.exe NÃO
+        //    entende `\"` — a linha inteira virava lixo e nada rodava.
+        // Solução: gravar um .cmd em disco (conteúdo controlado byte a byte) e
+        // executá-lo. O relançamento é INCONDICIONAL: se o instalador falhar, o
+        // usuário fica com a versão antiga aberta em vez de ficar sem Hub, e a
+        // saída do instalador vai pra taylorhub-update.log pra diagnóstico.
+        let bat = std::env::temp_dir().join("taylorhub-update.cmd");
+        let log = std::env::temp_dir().join("taylorhub-update.log");
+        let script = format!(
+            "@echo off\r\n\
+             rem gerado pelo TaylorHub: instala a atualizacao e reabre o app\r\n\
+             ping -n 4 127.0.0.1 >nul\r\n\
+             \"{inst}\" /S >\"{log}\" 2>&1\r\n\
+             start \"\" \"{hub}\"\r\n\
+             del \"%~f0\"\r\n",
+            inst = payload.display(),
+            log = log.display(),
+            hub = hub
+        );
+        fs::write(&bat, script).map_err(|e| format!("Falha ao gravar o script de update: {}", e))?;
         Command::new("cmd")
-            .args([
-                "/C",
-                &format!(
-                    "ping -n 4 127.0.0.1 >nul & \"{}\" /S && start \"\" \"{}\"",
-                    payload.display(),
-                    hub
-                ),
-            ])
+            .arg("/C")
+            // raw_arg: caminho verbatim, sem o escaping incompatível com o cmd
+            .raw_arg(format!("\"{}\"", bat.display()))
             .creation_flags(CREATE_NO_WINDOW)
             .spawn()
             .map_err(|e| format!("Falha ao agendar o instalador: {}", e))?;
