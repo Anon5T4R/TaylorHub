@@ -1139,7 +1139,18 @@ pub fn run() {
 
 #[cfg(test)]
 mod tests {
-    use super::{glob_match, version_from_filename};
+    use super::{fetch_latest, glob_match, version_from_filename};
+
+    /// Valida o caminho real de rede (reqwest+rustls → api.github.com) na máquina.
+    /// `--ignored` pra não travar CI offline; rodar com: cargo test -- --ignored
+    #[test]
+    #[ignore]
+    fn github_fetch_works() {
+        let rel = tauri::async_runtime::block_on(fetch_latest("Anon5T4R/LocalOffice"))
+            .expect("fetch_latest falhou");
+        assert!(rel.version.starts_with("0."), "versão inesperada: {}", rel.version);
+        assert!(rel.assets.iter().any(|a| a.name.ends_with("-setup.exe")));
+    }
 
     #[test]
     fn version_from_names() {

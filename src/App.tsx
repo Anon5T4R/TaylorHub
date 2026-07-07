@@ -133,12 +133,19 @@ export default function App() {
           setProgress((prev) => ({ ...prev, [p.id]: p })),
         );
         // Última versão de cada app (tolera falha individual, ex. sem internet).
-        await Promise.allSettled(
+        const results = await Promise.allSettled(
           CATALOG.map(async (app) => {
             const rel = await getLatestRelease(app.repo);
             setLatest((prev) => ({ ...prev, [app.id]: rel }));
           }),
         );
+        if (results.every((r) => r.status === "rejected")) {
+          const first = results[0] as PromiseRejectedResult;
+          setErrors((prev) => ({
+            ...prev,
+            _global: `Não consegui consultar as releases no GitHub — sem isso não aparecem atualizações. (${first.reason})`,
+          }));
+        }
         // Update do PRÓPRIO Hub: só avisa; aplicar exige clique do usuário.
         try {
           const current = await getVersion();
