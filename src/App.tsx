@@ -229,7 +229,7 @@ export default function App() {
       setHubUpdateMsg(
         result === "restart"
           ? "Atualizado! Feche e reabra o Hub."
-          : "Instalando — o Hub vai fechar…",
+          : "Instalando — o Hub vai fechar e reabrir atualizado…",
       );
     } catch (e) {
       setHubUpdateMsg(`Erro: ${e}`);

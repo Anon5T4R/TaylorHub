@@ -70,6 +70,7 @@ pub struct InstalledInfo {
 
 /// Extrai "0.14.6" de nomes tipo "LocalOffice_0.14.6_amd64.AppImage" / "OpenObsidian-0.7.1.AppImage".
 /// Exige pelo menos dois grupos numéricos ("2" sozinho não é versão).
+#[cfg_attr(windows, allow(dead_code))] // usado no scan de AppImages (Linux) e nos testes
 fn version_from_filename(name: &str) -> Option<String> {
     fn validate(cur: &mut String) -> Option<String> {
         let v = cur.trim_matches('.').to_string();
@@ -627,11 +628,22 @@ async fn update_self(app: tauri::AppHandle, spec: SelfUpdateSpec) -> Result<Stri
     {
         use std::os::windows::process::CommandExt;
         const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+        let hub = std::env::current_exe()
+            .map_err(|e| format!("current_exe: {}", e))?
+            .to_string_lossy()
+            .to_string();
         // O instalador não sobrescreve exe em uso: dispara com atraso e fecha o Hub.
+        // Delay via ping (NÃO usar `timeout`: ele exige stdin de console e, vindo de
+        // app GUI, falha na hora — o instalador rodava com o Hub ainda aberto e abortava).
+        // Depois de instalar com sucesso, reabre o Hub atualizado.
         Command::new("cmd")
             .args([
                 "/C",
-                &format!("timeout /T 2 /NOBREAK >nul & \"{}\" /S", payload.display()),
+                &format!(
+                    "ping -n 4 127.0.0.1 >nul & \"{}\" /S && start \"\" \"{}\"",
+                    payload.display(),
+                    hub
+                ),
             ])
             .creation_flags(CREATE_NO_WINDOW)
             .spawn()
