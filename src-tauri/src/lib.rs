@@ -289,7 +289,7 @@ fn get_os() -> String {
 // GitHub releases
 // ---------------------------------------------------------------------------
 
-#[derive(Serialize, Clone)]
+#[derive(Serialize, Deserialize, Clone)]
 #[serde(rename_all = "camelCase")]
 pub struct ReleaseInfo {
     tag: String,
@@ -297,12 +297,63 @@ pub struct ReleaseInfo {
     assets: Vec<AssetInfo>,
 }
 
-#[derive(Serialize, Clone)]
+#[derive(Serialize, Deserialize, Clone)]
 #[serde(rename_all = "camelCase")]
 pub struct AssetInfo {
     name: String,
     url: String,
     size: u64,
+}
+
+// Cache local das consultas de release: a API anônima do GitHub permite só
+// 60 req/hora por IP, e cada abertura do Hub custa 1 req por app do catálogo.
+// Sem cache, abrir o Hub ~6x na mesma hora já vira 403 pra tudo.
+
+const RELEASE_CACHE_TTL_SECS: u64 = 30 * 60;
+
+#[derive(Serialize, Deserialize, Default)]
+struct ReleaseCache(std::collections::HashMap<String, CachedRelease>);
+
+#[derive(Serialize, Deserialize, Clone)]
+struct CachedRelease {
+    fetched_at: u64,
+    release: ReleaseInfo,
+}
+
+/// Serializa leitura+escrita do arquivo de cache (o frontend consulta todos
+/// os repos em paralelo; sem isso, gravações concorrentes se perdem).
+static RELEASE_CACHE_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+fn release_cache_path() -> PathBuf {
+    config_dir().join("releases_cache.json")
+}
+
+fn now_secs() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0)
+}
+
+fn cache_is_fresh(entry: &CachedRelease, now: u64) -> bool {
+    now.saturating_sub(entry.fetched_at) < RELEASE_CACHE_TTL_SECS
+}
+
+fn release_cache_get(repo: &str) -> Option<CachedRelease> {
+    let _guard = RELEASE_CACHE_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let cache: ReleaseCache = read_json(&release_cache_path())?;
+    cache.0.get(repo).cloned()
+}
+
+fn release_cache_put(repo: &str, release: &ReleaseInfo) {
+    let _guard = RELEASE_CACHE_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let mut cache: ReleaseCache = read_json(&release_cache_path()).unwrap_or_default();
+    cache.0.insert(
+        repo.to_string(),
+        CachedRelease { fetched_at: now_secs(), release: release.clone() },
+    );
+    // Cache é otimização: falha ao gravar não pode derrubar a consulta.
+    let _ = write_json(&release_cache_path(), &cache);
 }
 
 fn http_client() -> Result<reqwest::Client, String> {
@@ -312,7 +363,26 @@ fn http_client() -> Result<reqwest::Client, String> {
         .map_err(|e| e.to_string())
 }
 
+/// Consulta a release mais recente, com cache local (TTL de 30 min).
+/// Se a API falhar (ex.: 403 de rate limit), devolve o cache mesmo vencido —
+/// dado velho é melhor que erro na tela.
 async fn fetch_latest(repo: &str) -> Result<ReleaseInfo, String> {
+    let cached = release_cache_get(repo);
+    if let Some(entry) = &cached {
+        if cache_is_fresh(entry, now_secs()) {
+            return Ok(entry.release.clone());
+        }
+    }
+    match fetch_latest_remote(repo).await {
+        Ok(release) => {
+            release_cache_put(repo, &release);
+            Ok(release)
+        }
+        Err(err) => cached.map(|entry| entry.release).ok_or(err),
+    }
+}
+
+async fn fetch_latest_remote(repo: &str) -> Result<ReleaseInfo, String> {
     let url = format!("https://api.github.com/repos/{}/releases/latest", repo);
     let resp = http_client()?
         .get(&url)
@@ -320,8 +390,14 @@ async fn fetch_latest(repo: &str) -> Result<ReleaseInfo, String> {
         .send()
         .await
         .map_err(|e| format!("Falha de rede em {}: {}", repo, e))?;
-    if !resp.status().is_success() {
-        return Err(format!("GitHub respondeu {} para {}", resp.status(), repo));
+    let status = resp.status();
+    if !status.is_success() {
+        let hint = if status == 403 || status == 429 {
+            " (provável rate limit da API — espere ~1h ou tente de novo mais tarde)"
+        } else {
+            ""
+        };
+        return Err(format!("GitHub respondeu {} para {}{}", status, repo, hint));
     }
     let body: serde_json::Value = resp.json().await.map_err(|e| e.to_string())?;
     let tag = body["tag_name"].as_str().unwrap_or("").to_string();
@@ -1167,7 +1243,10 @@ pub fn run() {
 
 #[cfg(test)]
 mod tests {
-    use super::{fetch_latest, glob_match, version_from_filename};
+    use super::{
+        cache_is_fresh, fetch_latest, glob_match, version_from_filename, CachedRelease,
+        ReleaseCache, ReleaseInfo, RELEASE_CACHE_TTL_SECS,
+    };
 
     /// Valida o caminho real de rede (reqwest+rustls → api.github.com) na máquina.
     /// `--ignored` pra não travar CI offline; rodar com: cargo test -- --ignored
@@ -1178,6 +1257,78 @@ mod tests {
             .expect("fetch_latest falhou");
         assert!(rel.version.starts_with("0."), "versão inesperada: {}", rel.version);
         assert!(rel.assets.iter().any(|a| a.name.ends_with("-setup.exe")));
+    }
+
+    /// Fallback: API falha (aqui, 404 de repo inexistente) + cache vencido → devolve o cache.
+    /// Mexe no releases_cache.json real da máquina; `--ignored` como o teste de rede.
+    #[test]
+    #[ignore]
+    fn stale_cache_fallback_works() {
+        let repo = "Anon5T4R/RepoQueNaoExiste12345";
+        super::release_cache_put(
+            repo,
+            &ReleaseInfo { tag: "v9.9.9".into(), version: "9.9.9".into(), assets: vec![] },
+        );
+        // Vence a entrada na marra (fetched_at = 0).
+        {
+            let _guard =
+                super::RELEASE_CACHE_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+            let path = super::release_cache_path();
+            let mut cache: ReleaseCache = super::read_json(&path).unwrap();
+            cache.0.get_mut(repo).unwrap().fetched_at = 0;
+            super::write_json(&path, &cache).unwrap();
+        }
+        let rel = tauri::async_runtime::block_on(fetch_latest(repo))
+            .expect("fallback pro cache vencido não funcionou");
+        assert_eq!(rel.version, "9.9.9");
+        // Limpa a entrada fake.
+        {
+            let _guard =
+                super::RELEASE_CACHE_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+            let path = super::release_cache_path();
+            let mut cache: ReleaseCache = super::read_json(&path).unwrap();
+            cache.0.remove(repo);
+            super::write_json(&path, &cache).unwrap();
+        }
+    }
+
+    #[test]
+    fn cache_freshness() {
+        let entry = CachedRelease {
+            fetched_at: 1000,
+            release: ReleaseInfo { tag: "v1.0.0".into(), version: "1.0.0".into(), assets: vec![] },
+        };
+        assert!(cache_is_fresh(&entry, 1000));
+        assert!(cache_is_fresh(&entry, 1000 + RELEASE_CACHE_TTL_SECS - 1));
+        assert!(!cache_is_fresh(&entry, 1000 + RELEASE_CACHE_TTL_SECS));
+        // Relógio andou pra trás (fetched_at no futuro) → trata como fresco, não estoura.
+        assert!(cache_is_fresh(&entry, 500));
+    }
+
+    #[test]
+    fn cache_roundtrip() {
+        let mut cache = ReleaseCache::default();
+        cache.0.insert(
+            "Anon5T4R/LocalOffice".into(),
+            CachedRelease {
+                fetched_at: 42,
+                release: ReleaseInfo {
+                    tag: "v0.14.6".into(),
+                    version: "0.14.6".into(),
+                    assets: vec![super::AssetInfo {
+                        name: "LocalOffice_0.14.6_x64-setup.exe".into(),
+                        url: "https://example.com/x".into(),
+                        size: 123,
+                    }],
+                },
+            },
+        );
+        let text = serde_json::to_string(&cache).unwrap();
+        let back: ReleaseCache = serde_json::from_str(&text).unwrap();
+        let entry = &back.0["Anon5T4R/LocalOffice"];
+        assert_eq!(entry.fetched_at, 42);
+        assert_eq!(entry.release.version, "0.14.6");
+        assert_eq!(entry.release.assets[0].size, 123);
     }
 
     #[test]
