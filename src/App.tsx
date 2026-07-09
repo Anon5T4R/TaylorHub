@@ -4,6 +4,7 @@ import { CATALOG, compareVersions, extensionRoutes, type CatalogApp } from "./ca
 import {
   applyAssociations,
   detectApps,
+  getIcon,
   getLatestRelease,
   getOs,
   inTauri,
@@ -65,14 +66,14 @@ function shortClock(ms: number): string {
   return new Date(ms).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
 }
 
-/** Ícone real do app (raw do GitHub); cai pra letra inicial se offline/404. */
-function AppAvatar({ app }: { app: CatalogApp }) {
+/** Ícone real do app (cache local via get_icon); cai pra letra inicial se ainda não baixado. */
+function AppAvatar({ app, src }: { app: CatalogApp; src?: string }) {
   const [broken, setBroken] = useState(false);
-  if (app.iconUrl && !broken) {
+  if (src && !broken) {
     return (
       <img
         className="avatar avatar-img"
-        src={app.iconUrl}
+        src={src}
         alt=""
         onError={() => setBroken(true)}
       />
@@ -103,6 +104,7 @@ export default function App() {
   const [recentsMsg, setRecentsMsg] = useState<string>("");
   const [checking, setChecking] = useState(false);
   const [checkedAt, setCheckedAt] = useState<number | null>(null);
+  const [icons, setIcons] = useState<Record<string, string>>({});
 
   const routeOptions = useMemo(() => extensionRoutes(), []);
 
@@ -112,6 +114,18 @@ export default function App() {
     for (const info of infos) map[info.id] = info;
     setInstalled(map);
     return map;
+  };
+
+  // Ícones dos cards: servidos do cache local em disco (data URL) — abrir o Hub
+  // não gasta rede com isso. `force` re-baixa do GitHub (botão "Verificar
+  // atualizações"). Sem cache e sem rede, o card fica com a letra inicial.
+  const loadIcons = async (force = false) => {
+    await Promise.allSettled(
+      CATALOG.filter((app) => app.iconUrl).map(async (app) => {
+        const src = await getIcon(app, force);
+        setIcons((prev) => ({ ...prev, [app.id]: src }));
+      }),
+    );
   };
 
   // Consulta a última release de cada app + do próprio Hub. `force` fura o cache
@@ -179,7 +193,9 @@ export default function App() {
         unlisten = await onProgress((p) =>
           setProgress((prev) => ({ ...prev, [p.id]: p })),
         );
-        // Carregamento inicial: usa o cache (rápido e sem gastar rate-limit).
+        // Carregamento inicial: usa os caches (rápido e sem gastar rate-limit).
+        // Ícones em paralelo — não precisam esperar as releases.
+        void loadIcons(false);
         await loadReleases(false);
       } catch (e) {
         setErrors((prev) => ({ ...prev, _global: String(e) }));
@@ -377,9 +393,12 @@ export default function App() {
           <div className="hub-refresh">
             <button
               className="refresh-btn"
-              onClick={() => loadReleases(true)}
+              onClick={() => {
+                void loadIcons(true);
+                void loadReleases(true);
+              }}
               disabled={checking}
-              title="Consulta o GitHub agora, ignorando o cache (30 min)"
+              title="Consulta o GitHub agora, ignorando os caches (releases e ícones)"
             >
               <span className={checking ? "spin" : ""}>↻</span>
               {checking ? "Verificando…" : "Verificar atualizações"}
@@ -433,7 +452,7 @@ export default function App() {
             return (
               <div className="card" key={app.id} style={{ borderTopColor: app.accent }}>
                 <div className="card-head">
-                  <AppAvatar app={app} />
+                  <AppAvatar app={app} src={icons[app.id] ?? (tauri ? undefined : app.iconUrl)} />
                   <div>
                     <h2>{app.name}</h2>
                     <div className="version">

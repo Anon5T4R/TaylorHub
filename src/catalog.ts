@@ -12,7 +12,7 @@ export interface CatalogApp {
   exe: string; // executável pós-instalação (Windows)
   extensions: string[]; // extensões que este app atende
   accent: string; // cor do card/avatar
-  /** PNG do ícone (raw do GitHub) — usado no atalho .desktop do Linux. */
+  /** PNG do ícone (raw do GitHub) — card (via cache local em disco) e atalho .desktop do Linux. */
   iconUrl?: string;
 }
 

@@ -427,6 +427,66 @@ async fn get_latest_release(repo: String, force: Option<bool>) -> Result<Release
 }
 
 // ---------------------------------------------------------------------------
+// Cache local dos ícones dos cards
+// ---------------------------------------------------------------------------
+
+// Ícone baixado uma vez pra config_dir()/icons/<id>.png e servido de lá como
+// data URL — abrir o Hub não depende de internet pra mostrar os ícones.
+// Só re-baixa com force=true (botão "Verificar atualizações").
+
+fn icon_path(id: &str) -> Option<PathBuf> {
+    // id vem do catálogo, mas sanitiza mesmo assim (vira nome de arquivo).
+    let safe: String = id
+        .chars()
+        .filter(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_'))
+        .collect();
+    if safe.is_empty() {
+        return None;
+    }
+    Some(config_dir().join("icons").join(format!("{safe}.png")))
+}
+
+fn icon_data_url(bytes: &[u8]) -> String {
+    use base64::{engine::general_purpose::STANDARD, Engine as _};
+    format!("data:image/png;base64,{}", STANDARD.encode(bytes))
+}
+
+#[tauri::command]
+async fn get_icon(id: String, url: String, force: Option<bool>) -> Result<String, String> {
+    let path = icon_path(&id).ok_or("id de app inválido")?;
+    let cached = fs::read(&path).ok();
+    if !force.unwrap_or(false) {
+        if let Some(bytes) = &cached {
+            return Ok(icon_data_url(bytes));
+        }
+    }
+    let fetched: Result<Vec<u8>, String> = async {
+        let resp = http_client()?
+            .get(&url)
+            .send()
+            .await
+            .map_err(|e| format!("Falha de rede no ícone de {}: {}", id, e))?;
+        if !resp.status().is_success() {
+            return Err(format!("GitHub respondeu {} para o ícone de {}", resp.status(), id));
+        }
+        Ok(resp.bytes().await.map_err(|e| e.to_string())?.to_vec())
+    }
+    .await;
+    match fetched {
+        Ok(bytes) => {
+            // Cache é otimização: falha ao gravar não pode derrubar o ícone.
+            if let Some(dir) = path.parent() {
+                let _ = fs::create_dir_all(dir);
+            }
+            let _ = fs::write(&path, &bytes);
+            Ok(icon_data_url(&bytes))
+        }
+        // Download falhou (offline/rate limit): cache velho é melhor que letra.
+        Err(err) => cached.map(|b| icon_data_url(&b)).ok_or(err),
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Download + instalação
 // ---------------------------------------------------------------------------
 
@@ -1228,6 +1288,7 @@ pub fn run() {
             detect_apps,
             get_os,
             get_latest_release,
+            get_icon,
             install_app,
             uninstall_app,
             update_self,

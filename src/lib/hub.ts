@@ -50,6 +50,11 @@ export async function getLatestRelease(repo: string, force = false): Promise<Rel
   return invoke<ReleaseInfo>("get_latest_release", { repo, force });
 }
 
+/** Ícone do card como data URL, servido do cache local; `force` re-baixa do GitHub. */
+export async function getIcon(app: CatalogApp, force = false): Promise<string> {
+  return invoke<string>("get_icon", { id: app.id, url: app.iconUrl ?? "", force });
+}
+
 export async function installApp(
   app: CatalogApp,
   os: string,
