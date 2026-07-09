@@ -5,7 +5,7 @@
 [LocalSheets](https://github.com/Anon5T4R/LocalSheets),
 [LocalSlides](https://github.com/Anon5T4R/LocalSlides),
 [LocalCode](https://github.com/Anon5T4R/LocalCode),
-[TaylorMind](https://github.com/Anon5T4R/TaylorMind),
+[LocalMind](https://github.com/Anon5T4R/LocalMind),
 [OpenObsidian](https://github.com/Anon5T4R/OpenObsidian)) e faz cada tipo de
 arquivo abrir no app certo.
 

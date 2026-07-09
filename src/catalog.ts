@@ -99,17 +99,18 @@ export const CATALOG: CatalogApp[] = [
     iconUrl: "https://raw.githubusercontent.com/Anon5T4R/TaylorChat/main/src-tauri/icons/128x128.png",
   },
   {
+    // id mantém "taylormind" por compatibilidade (chave de installed.json/dispatch).
     id: "taylormind",
-    name: "TaylorMind",
+    name: "LocalMind",
     description: "Mapas mentais (XMind) — IA gera/expande o mapa",
     kind: "app",
-    repo: "Anon5T4R/TaylorMind",
-    assets: { win: "TaylorMind.Setup.*.exe", linux: "TaylorMind*.AppImage" },
+    repo: "Anon5T4R/LocalMind",
+    assets: { win: "LocalMind.Setup.*.exe", linux: "LocalMind*.AppImage" },
     silentArgs: ["/S"],
-    exe: "TaylorMind.exe",
+    exe: "LocalMind.exe",
     extensions: ["tmind"],
     accent: "#ea580c",
-    iconUrl: "https://raw.githubusercontent.com/Anon5T4R/TaylorMind/main/build/icon.png",
+    iconUrl: "https://raw.githubusercontent.com/Anon5T4R/LocalMind/main/build/icon.png",
   },
   {
     id: "taylorai",
