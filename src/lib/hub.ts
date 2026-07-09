@@ -46,8 +46,8 @@ export async function detectApps(apps: CatalogApp[]): Promise<InstalledInfo[]> {
   });
 }
 
-export async function getLatestRelease(repo: string): Promise<ReleaseInfo> {
-  return invoke<ReleaseInfo>("get_latest_release", { repo });
+export async function getLatestRelease(repo: string, force = false): Promise<ReleaseInfo> {
+  return invoke<ReleaseInfo>("get_latest_release", { repo, force });
 }
 
 export async function installApp(

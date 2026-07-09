@@ -364,13 +364,17 @@ fn http_client() -> Result<reqwest::Client, String> {
 }
 
 /// Consulta a release mais recente, com cache local (TTL de 30 min).
+/// `force` pula a checagem de TTL (botão "Verificar atualizações"), mas o
+/// resultado ainda alimenta o cache e a falha ainda cai no fallback.
 /// Se a API falhar (ex.: 403 de rate limit), devolve o cache mesmo vencido —
 /// dado velho é melhor que erro na tela.
-async fn fetch_latest(repo: &str) -> Result<ReleaseInfo, String> {
+async fn fetch_latest(repo: &str, force: bool) -> Result<ReleaseInfo, String> {
     let cached = release_cache_get(repo);
-    if let Some(entry) = &cached {
-        if cache_is_fresh(entry, now_secs()) {
-            return Ok(entry.release.clone());
+    if !force {
+        if let Some(entry) = &cached {
+            if cache_is_fresh(entry, now_secs()) {
+                return Ok(entry.release.clone());
+            }
         }
     }
     match fetch_latest_remote(repo).await {
@@ -418,8 +422,8 @@ async fn fetch_latest_remote(repo: &str) -> Result<ReleaseInfo, String> {
 }
 
 #[tauri::command]
-async fn get_latest_release(repo: String) -> Result<ReleaseInfo, String> {
-    fetch_latest(&repo).await
+async fn get_latest_release(repo: String, force: Option<bool>) -> Result<ReleaseInfo, String> {
+    fetch_latest(&repo, force.unwrap_or(false)).await
 }
 
 // ---------------------------------------------------------------------------
@@ -600,7 +604,7 @@ fn install_payload(spec: &InstallSpec, payload: &Path, icon: Option<&[u8]>) -> R
 
 #[tauri::command]
 async fn install_app(app: tauri::AppHandle, spec: InstallSpec) -> Result<InstalledInfo, String> {
-    let release = fetch_latest(&spec.repo).await?;
+    let release = fetch_latest(&spec.repo, false).await?;
     let asset = release
         .assets
         .iter()
@@ -691,7 +695,7 @@ pub struct SelfUpdateSpec {
 /// ($APPIMAGE) com rename atômico — retorna "restart" (usuário reabre).
 #[tauri::command]
 async fn update_self(app: tauri::AppHandle, spec: SelfUpdateSpec) -> Result<String, String> {
-    let release = fetch_latest(&spec.repo).await?;
+    let release = fetch_latest(&spec.repo, false).await?;
     let asset = release
         .assets
         .iter()
@@ -1253,7 +1257,9 @@ mod tests {
     #[test]
     #[ignore]
     fn github_fetch_works() {
-        let rel = tauri::async_runtime::block_on(fetch_latest("Anon5T4R/LocalOffice"))
+        // force=true: o teste valida o caminho de REDE — sem furar o TTL ele
+        // responderia do cache e não testaria nada.
+        let rel = tauri::async_runtime::block_on(fetch_latest("Anon5T4R/LocalOffice", true))
             .expect("fetch_latest falhou");
         assert!(rel.version.starts_with("0."), "versão inesperada: {}", rel.version);
         assert!(rel.assets.iter().any(|a| a.name.ends_with("-setup.exe")));
@@ -1278,7 +1284,7 @@ mod tests {
             cache.0.get_mut(repo).unwrap().fetched_at = 0;
             super::write_json(&path, &cache).unwrap();
         }
-        let rel = tauri::async_runtime::block_on(fetch_latest(repo))
+        let rel = tauri::async_runtime::block_on(fetch_latest(repo, false))
             .expect("fallback pro cache vencido não funcionou");
         assert_eq!(rel.version, "9.9.9");
         // Limpa a entrada fake.

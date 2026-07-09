@@ -90,6 +90,53 @@ body {
   color: #fff;
 }
 
+.hub-refresh {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.refresh-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 7px 14px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: transparent;
+  color: var(--text);
+  cursor: pointer;
+  font-size: 13px;
+  white-space: nowrap;
+}
+
+.refresh-btn:hover:not(:disabled) {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.refresh-btn:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
+.refresh-btn .spin {
+  display: inline-block;
+  animation: hub-spin 0.9s linear infinite;
+}
+
+@keyframes hub-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.refresh-when {
+  font-size: 12px;
+  color: var(--muted, #8a8f98);
+  white-space: nowrap;
+}
+
 .hub-banner {
   margin: 12px 22px 0;
   padding: 9px 14px;

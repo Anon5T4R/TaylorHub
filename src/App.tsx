@@ -60,6 +60,11 @@ function fmtBytes(n: number): string {
   return `${(n / 1_000).toFixed(0)} KB`;
 }
 
+/** Relógio curto (HH:MM) da última verificação de atualizações. */
+function shortClock(ms: number): string {
+  return new Date(ms).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+}
+
 /** Ícone real do app (raw do GitHub); cai pra letra inicial se offline/404. */
 function AppAvatar({ app }: { app: CatalogApp }) {
   const [broken, setBroken] = useState(false);
@@ -96,6 +101,8 @@ export default function App() {
   const [hubUpdateMsg, setHubUpdateMsg] = useState<string>("");
   const [recents, setRecents] = useState<RecentEntry[]>([]);
   const [recentsMsg, setRecentsMsg] = useState<string>("");
+  const [checking, setChecking] = useState(false);
+  const [checkedAt, setCheckedAt] = useState<number | null>(null);
 
   const routeOptions = useMemo(() => extensionRoutes(), []);
 
@@ -105,6 +112,46 @@ export default function App() {
     for (const info of infos) map[info.id] = info;
     setInstalled(map);
     return map;
+  };
+
+  // Consulta a última release de cada app + do próprio Hub. `force` fura o cache
+  // (TTL de 30 min): o carregamento inicial usa o cache; o botão "Verificar
+  // atualizações" força a consulta pra não ficar preso numa versão vencida.
+  const loadReleases = async (force = false) => {
+    setChecking(true);
+    try {
+      const results = await Promise.allSettled(
+        CATALOG.map(async (app) => {
+          const rel = await getLatestRelease(app.repo, force);
+          setLatest((prev) => ({ ...prev, [app.id]: rel }));
+        }),
+      );
+      if (results.every((r) => r.status === "rejected")) {
+        const first = results[0] as PromiseRejectedResult;
+        setErrors((prev) => ({
+          ...prev,
+          _global: `Não consegui consultar as releases no GitHub — sem isso não aparecem atualizações. (${first.reason})`,
+        }));
+      } else {
+        setErrors((prev) => {
+          if (!prev._global) return prev;
+          const next = { ...prev };
+          delete next._global;
+          return next;
+        });
+      }
+      // Update do PRÓPRIO Hub: só avisa; aplicar exige clique do usuário.
+      try {
+        const current = await getVersion();
+        const rel = await getLatestRelease(HUB_REPO, force);
+        setHubUpdate(compareVersions(rel.version, current) > 0 ? { current, latest: rel.version } : null);
+      } catch {
+        /* sem internet/release — segue o baile */
+      }
+      setCheckedAt(Date.now());
+    } finally {
+      setChecking(false);
+    }
   };
 
   useEffect(() => {
@@ -132,30 +179,8 @@ export default function App() {
         unlisten = await onProgress((p) =>
           setProgress((prev) => ({ ...prev, [p.id]: p })),
         );
-        // Última versão de cada app (tolera falha individual, ex. sem internet).
-        const results = await Promise.allSettled(
-          CATALOG.map(async (app) => {
-            const rel = await getLatestRelease(app.repo);
-            setLatest((prev) => ({ ...prev, [app.id]: rel }));
-          }),
-        );
-        if (results.every((r) => r.status === "rejected")) {
-          const first = results[0] as PromiseRejectedResult;
-          setErrors((prev) => ({
-            ...prev,
-            _global: `Não consegui consultar as releases no GitHub — sem isso não aparecem atualizações. (${first.reason})`,
-          }));
-        }
-        // Update do PRÓPRIO Hub: só avisa; aplicar exige clique do usuário.
-        try {
-          const current = await getVersion();
-          const rel = await getLatestRelease(HUB_REPO);
-          if (compareVersions(rel.version, current) > 0) {
-            setHubUpdate({ current, latest: rel.version });
-          }
-        } catch {
-          /* sem internet/release — segue o baile */
-        }
+        // Carregamento inicial: usa o cache (rápido e sem gastar rate-limit).
+        await loadReleases(false);
       } catch (e) {
         setErrors((prev) => ({ ...prev, _global: String(e) }));
       }
@@ -348,6 +373,22 @@ export default function App() {
             Associações
           </button>
         </nav>
+        {tauri && (
+          <div className="hub-refresh">
+            <button
+              className="refresh-btn"
+              onClick={() => loadReleases(true)}
+              disabled={checking}
+              title="Consulta o GitHub agora, ignorando o cache (30 min)"
+            >
+              <span className={checking ? "spin" : ""}>↻</span>
+              {checking ? "Verificando…" : "Verificar atualizações"}
+            </button>
+            {checkedAt && !checking && (
+              <span className="refresh-when">Verificado {shortClock(checkedAt)}</span>
+            )}
+          </div>
+        )}
       </header>
 
       {!tauri && (
