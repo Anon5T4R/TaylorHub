@@ -81,7 +81,8 @@ export const CATALOG: CatalogApp[] = [
     assets: { win: "*_x64-setup.exe", linux: "*_amd64.AppImage" },
     silentArgs: ["/S"],
     exe: "LocalData.exe",
-    extensions: ["tbase"],
+    // db/sqlite: o LocalData abre qualquer SQLite (só adiciona os metadados dele)
+    extensions: ["tbase", "db", "sqlite"],
     accent: "#a855f7",
     iconUrl: "https://raw.githubusercontent.com/Anon5T4R/LocalData/main/src-tauri/icons/128x128.png",
   },
