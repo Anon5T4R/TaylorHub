@@ -1,6 +1,6 @@
 # TaylorHub
 
-**Instalador e central da suíte Taylor** — instala, atualiza e abre os apps
+**Instalador e central da suíte Local** — instala, atualiza e abre os apps
 ([LocalOffice](https://github.com/Anon5T4R/LocalOffice),
 [LocalSheets](https://github.com/Anon5T4R/LocalSheets),
 [LocalSlides](https://github.com/Anon5T4R/LocalSlides),

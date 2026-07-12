@@ -366,7 +366,7 @@ export default function App() {
         <div className="hub-brand">
           <span className="hub-logo">◱</span>
           <h1>
-            TaylorHub <span className="hub-sub">suíte Taylor — instalar, atualizar, abrir</span>
+            TaylorHub <span className="hub-sub">suíte Local — instalar, atualizar, abrir</span>
           </h1>
         </div>
         <nav className="hub-tabs">

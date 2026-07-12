@@ -1,4 +1,4 @@
-// Catálogo da suíte Taylor. App novo = uma entrada aqui (e/ou no catalog.json remoto).
+// Catálogo da suíte Local. App novo = uma entrada aqui (e/ou no catalog.json remoto).
 // A ordem importa: pra extensão disputada, o PRIMEIRO app da lista é a rota default.
 
 export interface CatalogApp {
@@ -126,17 +126,17 @@ export const CATALOG: CatalogApp[] = [
     iconUrl: "https://raw.githubusercontent.com/Anon5T4R/LocalMind/main/build/icon.png",
   },
   {
-    id: "taylorai",
-    name: "TaylorAI Studio",
+    id: "localai",
+    name: "LocalAI Studio",
     description: "Roda modelos GGUF locais (LM Studio) — CPU e iGPU no talo",
     kind: "app",
-    repo: "Anon5T4R/taylorai-studio",
+    repo: "Anon5T4R/LocalAI",
     assets: { win: "*_x64-setup.exe", linux: "*_amd64.AppImage" },
     silentArgs: ["/S"],
-    exe: "TaylorAI Studio.exe",
+    exe: "LocalAI Studio.exe",
     extensions: [],
     accent: "#e11d48",
-    iconUrl: "https://raw.githubusercontent.com/Anon5T4R/taylorai-studio/main/src-tauri/icons/128x128.png",
+    iconUrl: "https://raw.githubusercontent.com/Anon5T4R/LocalAI/main/src-tauri/icons/128x128.png",
   },
   {
     id: "openobsidian",

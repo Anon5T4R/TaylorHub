@@ -67,7 +67,7 @@ jobs:
           releaseBody: |
             ## TaylorHub ${{ github.ref_name }}
 
-            Instalador e central da suíte Taylor — instala, atualiza e abre os apps,
+            Instalador e central da suíte Local — instala, atualiza e abre os apps,
             e faz cada tipo de arquivo abrir no app certo.
 
             ### Downloads
