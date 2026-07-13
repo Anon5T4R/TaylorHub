@@ -164,6 +164,22 @@ export const CATALOG: CatalogApp[] = [
     iconUrl: "https://raw.githubusercontent.com/Anon5T4R/LocalMedia/main/src-tauri/icons/128x128.png",
   },
   {
+    id: "image",
+    category: "Mídia",
+    // Decisão do plano: NÃO associar extensões de imagem por padrão (não
+    // roubar o visualizador do SO). Quem quiser associa por fora.
+    name: "LocalImage",
+    description: "Visualizador, anotador e captura de tela — EXIF, lote, atalho global",
+    kind: "app",
+    repo: "Anon5T4R/LocalImage",
+    assets: { win: "*_x64-setup.exe", linux: "*_amd64.AppImage" },
+    silentArgs: ["/S"],
+    exe: "LocalImage.exe",
+    extensions: [],
+    accent: "#0d9488",
+    iconUrl: "https://raw.githubusercontent.com/Anon5T4R/LocalImage/main/src-tauri/icons/128x128.png",
+  },
+  {
     id: "taylorchat",
     category: "Comunicação",
     name: "TaylorChat",
