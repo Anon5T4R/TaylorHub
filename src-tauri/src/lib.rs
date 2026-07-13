@@ -390,10 +390,11 @@ fn github_token_status() -> bool {
     github_token().is_some()
 }
 
-/// OAuth App do GitHub com device flow habilitado (Settings → Developer
-/// settings → OAuth Apps). Vazio = build sem login pelo navegador; o front
-/// cai no fallback de abrir a página de criação de token pré-preenchida.
-const GITHUB_CLIENT_ID: &str = "";
+/// OAuth App "TaylorHub" (conta Anon5T4R) com device flow habilitado.
+/// Client ID é público por natureza — não há secret no device flow.
+/// Vazio = build sem login pelo navegador; o front cai no fallback de abrir
+/// a página de criação de token pré-preenchida.
+const GITHUB_CLIENT_ID: &str = "Ov23lirGYsjc99nYBvh3";
 
 #[tauri::command]
 fn github_client_configured() -> bool {
