@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { getVersion } from "@tauri-apps/api/app";
+import { openUrl } from "@tauri-apps/plugin-opener";
 import { CATALOG, compareVersions, extensionRoutes, type CatalogApp } from "./catalog";
 import {
   addCustomRepo,
@@ -8,6 +9,9 @@ import {
   getIcon,
   getLatestRelease,
   getOs,
+  githubClientConfigured,
+  githubDevicePoll,
+  githubDeviceStart,
   githubTokenStatus,
   inTauri,
   installApp,
@@ -73,6 +77,18 @@ function shortClock(ms: number): string {
   return new Date(ms).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
 }
 
+const CUSTOM_CATEGORY = "Meus repositórios";
+
+/** Ordem das seções da grade; categorias novas caem no fim. */
+const CATEGORY_ORDER = [
+  "Escritório",
+  "Dados e conhecimento",
+  "Desenvolvimento",
+  "Comunicação",
+  "Inteligência artificial",
+  CUSTOM_CATEGORY,
+];
+
 /** Card genérico pra repositório do usuário, no mesmo formato do catálogo. */
 function customAsCatalog(c: CustomApp): CatalogApp {
   return {
@@ -85,33 +101,23 @@ function customAsCatalog(c: CustomApp): CatalogApp {
     silentArgs: ["/S"],
     exe: c.exe || `${c.name}.exe`,
     extensions: [],
+    category: CUSTOM_CATEGORY,
     accent: "#64748b",
   };
 }
 
-const ORDER_KEY = "hub.appOrder";
-
-function loadOrder(): string[] {
-  try {
-    const v = JSON.parse(localStorage.getItem(ORDER_KEY) ?? "[]");
-    return Array.isArray(v) ? v : [];
-  } catch {
-    return [];
+/** Agrupa os cards por categoria, na ordem fixa das seções. */
+function groupByCategory(apps: CatalogApp[]): [string, CatalogApp[]][] {
+  const by = new Map<string, CatalogApp[]>();
+  for (const a of apps) {
+    const c = a.category || "Outros";
+    const list = by.get(c) ?? [];
+    list.push(a);
+    by.set(c, list);
   }
-}
-
-/** Aplica a ordem salva: ids conhecidos primeiro (na ordem), o resto no fim. */
-function sortByOrder(apps: CatalogApp[], order: string[]): CatalogApp[] {
-  if (!order.length) return apps;
-  const pos = new Map(order.map((id, i) => [id, i]));
-  return [...apps].sort((a, b) => {
-    const pa = pos.get(a.id);
-    const pb = pos.get(b.id);
-    if (pa == null && pb == null) return 0;
-    if (pa == null) return 1;
-    if (pb == null) return -1;
-    return pa - pb;
-  });
+  const known = CATEGORY_ORDER.filter((c) => by.has(c));
+  const extra = [...by.keys()].filter((c) => !CATEGORY_ORDER.includes(c));
+  return [...known, ...extra].map((c) => [c, by.get(c)!]);
 }
 
 /** Ícone real do app (cache local via get_icon); cai pra letra inicial se ainda não baixado. */
@@ -163,14 +169,16 @@ export default function App() {
   const [ghOpen, setGhOpen] = useState(false);
   const [ghToken, setGhToken] = useState("");
   const [ghMsg, setGhMsg] = useState("");
-  const [order, setOrder] = useState<string[]>(loadOrder);
-  const [dragId, setDragId] = useState<string | null>(null);
+  const [ghConfigured, setGhConfigured] = useState(false);
+  const [ghFlow, setGhFlow] = useState<{ userCode: string; verificationUri: string } | null>(null);
+  const [ghBusy, setGhBusy] = useState(false);
+  const [ghManual, setGhManual] = useState(false);
 
   const routeOptions = useMemo(() => extensionRoutes(), []);
 
-  const gridApps = useMemo(
-    () => sortByOrder([...CATALOG, ...customApps.map(customAsCatalog)], order),
-    [customApps, order],
+  const sections = useMemo(
+    () => groupByCategory([...CATALOG, ...customApps.map(customAsCatalog)]),
+    [customApps],
   );
 
   const refreshInstalled = async (customs: CustomApp[] = customApps) => {
@@ -255,6 +263,7 @@ export default function App() {
         const customs = await listCustomRepos();
         setCustomApps(customs);
         githubTokenStatus().then(setGhLogged).catch(() => {});
+        githubClientConfigured().then(setGhConfigured).catch(() => {});
         await refreshInstalled(customs);
         setRecents(await readRecents());
         // Rotas salvas anteriormente sobrescrevem os defaults.
@@ -344,20 +353,33 @@ export default function App() {
     setCustomApps((list) => list.filter((c) => c.id !== app.id));
   };
 
-  // ordem dos cards: arrastar um card sobre outro insere na posição dele
-  const moveApp = (fromId: string, toId: string) => {
-    const ids = gridApps.map((a) => a.id);
-    const from = ids.indexOf(fromId);
-    const to = ids.indexOf(toId);
-    if (from < 0 || to < 0) return;
-    ids.splice(to, 0, ids.splice(from, 1)[0]);
-    setOrder(ids);
-    localStorage.setItem(ORDER_KEY, JSON.stringify(ids));
-  };
-
-  const resetOrder = () => {
-    setOrder([]);
-    localStorage.removeItem(ORDER_KEY);
+  /** Login pelo navegador: device flow quando o build tem OAuth App; senão
+   *  abre a página de criação de token já preenchida (colar uma vez). */
+  const browserLogin = async () => {
+    setGhMsg("");
+    if (!ghConfigured) {
+      await openUrl(
+        "https://github.com/settings/tokens/new?description=TaylorHub%20(leitura%20p%C3%BAblica)&scopes=",
+      ).catch(() => {});
+      setGhManual(true);
+      setGhMsg("Clique em \"Generate token\" na página que abriu, copie e cole aqui embaixo.");
+      return;
+    }
+    setGhBusy(true);
+    try {
+      const s = await githubDeviceStart();
+      setGhFlow({ userCode: s.userCode, verificationUri: s.verificationUri });
+      await openUrl(s.verificationUri).catch(() => {});
+      const limit = await githubDevicePoll(s.deviceCode, s.interval, s.expiresIn);
+      setGhLogged(true);
+      setGhFlow(null);
+      setGhMsg(`Conectado — ${limit.toLocaleString("pt-BR")} requisições/hora.`);
+    } catch (e) {
+      setGhFlow(null);
+      setGhMsg(String(e));
+    } finally {
+      setGhBusy(false);
+    }
   };
 
   const saveGhToken = async () => {
@@ -616,13 +638,13 @@ export default function App() {
             <button className="primary" onClick={doAddRepo} disabled={!tauri || repoBusy || !repoInput.trim()}>
               {repoBusy ? "Adicionando…" : "Adicionar repositório"}
             </button>
-            <button onClick={resetOrder} title="Voltar à ordem padrão dos cards (dica: arraste os cards pra reordenar)">
-              ↺ ordem
-            </button>
             {repoMsg && <span className="assoc-msg">{repoMsg}</span>}
           </div>
+          {sections.map(([category, apps]) => (
+          <section className="hub-section" key={category}>
+          <h3 className="cat-title">{category}</h3>
           <div className="hub-grid">
-          {gridApps.map((app) => {
+          {apps.map((app) => {
             const info = installed[app.id];
             const rel = latest[app.id];
             const isDeb = info?.source === "deb";
@@ -635,20 +657,7 @@ export default function App() {
             const prog = progress[app.id];
             const isBusy = !!busy[app.id];
             return (
-              <div
-                className={`card${dragId === app.id ? " dragging" : ""}`}
-                key={app.id}
-                style={{ borderTopColor: app.accent }}
-                draggable
-                onDragStart={() => setDragId(app.id)}
-                onDragEnd={() => setDragId(null)}
-                onDragOver={(e) => e.preventDefault()}
-                onDrop={(e) => {
-                  e.preventDefault();
-                  if (dragId && dragId !== app.id) moveApp(dragId, app.id);
-                  setDragId(null);
-                }}
-              >
+              <div className="card" key={app.id} style={{ borderTopColor: app.accent }}>
                 <div className="card-head">
                   <AppAvatar app={app} src={icons[app.id] ?? (tauri ? undefined : app.iconUrl)} />
                   <div>
@@ -733,6 +742,8 @@ export default function App() {
             );
           })}
           </div>
+          </section>
+          ))}
         </main>
       )}
 
@@ -848,37 +859,74 @@ export default function App() {
       )}
 
       {ghOpen && (
-        <div className="modal-overlay" onClick={() => setGhOpen(false)}>
+        <div className="modal-overlay" onClick={() => !ghBusy && setGhOpen(false)}>
           <div className="modal" onClick={(e) => e.stopPropagation()}>
-            <h3>Login no GitHub (opcional)</h3>
+            <h3>Conectar ao GitHub (opcional)</h3>
             <p>
               Sem login, o GitHub limita as consultas anônimas a <strong>60/hora por IP</strong> —
-              abrir o Hub várias vezes seguidas dá o erro 403. Com um token, o limite vira{" "}
-              <strong>5.000/hora</strong>.
+              abrir o Hub várias vezes seguidas dá o erro 403. Conectado, o limite vira{" "}
+              <strong>5.000/hora</strong>. A credencial fica no <strong>cofre do sistema</strong>{" "}
+              (nunca em arquivo) e só é usada pra consultar e baixar releases.
             </p>
-            <p>
-              O token fica guardado no <strong>cofre do sistema</strong> (DPAPI/Secret Service),
-              nunca em arquivo, e só é usado pra consultar e baixar releases. Crie um em{" "}
-              <em>github.com → Settings → Developer settings → Personal access tokens</em> — sem
-              marcar <strong>nenhum</strong> escopo (leitura pública basta).
-            </p>
-            <input
-              type="password"
-              value={ghToken}
-              onChange={(e) => setGhToken(e.target.value)}
-              placeholder="ghp_… ou github_pat_…"
-              spellCheck={false}
-            />
-            <div className="modal-actions">
-              <button className="primary" onClick={saveGhToken} disabled={!ghToken.trim()}>
-                Salvar token
+
+            {!ghLogged && !ghFlow && (
+              <button className="primary gh-big" onClick={browserLogin} disabled={ghBusy}>
+                {ghBusy ? "Abrindo o navegador…" : "🌐 Entrar com o navegador"}
               </button>
-              {ghLogged && (
-                <button className="danger" onClick={clearGhToken}>
-                  Remover token
+            )}
+
+            {ghFlow && (
+              <div className="gh-flow">
+                <p>Digite este código na página do GitHub que abriu:</p>
+                <div className="gh-code">{ghFlow.userCode}</div>
+                <p className="gh-wait">
+                  Aguardando você autorizar no navegador…{" "}
+                  <a
+                    href={ghFlow.verificationUri}
+                    onClick={(e) => {
+                      e.preventDefault();
+                      openUrl(ghFlow.verificationUri).catch(() => {});
+                    }}
+                  >
+                    reabrir a página
+                  </a>
+                </p>
+              </div>
+            )}
+
+            {ghLogged && <p className="assoc-msg">✓ Conectado.</p>}
+
+            {(ghManual || !ghConfigured) && !ghLogged && (
+              <>
+                <p className="gh-manual-hint">
+                  {ghManual
+                    ? "Cole o token gerado:"
+                    : "Ou cole um token criado manualmente (sem nenhum escopo marcado):"}
+                </p>
+                <input
+                  type="password"
+                  value={ghToken}
+                  onChange={(e) => setGhToken(e.target.value)}
+                  placeholder="ghp_… ou github_pat_…"
+                  spellCheck={false}
+                />
+              </>
+            )}
+
+            <div className="modal-actions">
+              {!ghLogged && ghToken.trim() && (
+                <button className="primary" onClick={saveGhToken}>
+                  Salvar token
                 </button>
               )}
-              <button onClick={() => setGhOpen(false)}>Fechar</button>
+              {ghLogged && (
+                <button className="danger" onClick={clearGhToken}>
+                  Desconectar
+                </button>
+              )}
+              <button disabled={ghBusy} onClick={() => setGhOpen(false)}>
+                Fechar
+              </button>
             </div>
             {ghMsg && <p className="assoc-msg">{ghMsg}</p>}
           </div>

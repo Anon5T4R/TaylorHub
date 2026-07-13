@@ -11,6 +11,8 @@ export interface CatalogApp {
   silentArgs: string[]; // args de instalação silenciosa (Windows)
   exe: string; // executável pós-instalação (Windows)
   extensions: string[]; // extensões que este app atende
+  /** Seção da grade de apps (Escritório, Desenvolvimento…). */
+  category: string;
   accent: string; // cor do card/avatar
   /** PNG do ícone (raw do GitHub) — card (via cache local em disco) e atalho .desktop do Linux. */
   iconUrl?: string;
@@ -19,6 +21,7 @@ export interface CatalogApp {
 export const CATALOG: CatalogApp[] = [
   {
     id: "writer",
+    category: "Escritório",
     name: "LocalOffice",
     description: "Documentos (Word) — DOCX/ODT/MD, acadêmico ABNT/APA, IA local",
     kind: "app",
@@ -32,6 +35,7 @@ export const CATALOG: CatalogApp[] = [
   },
   {
     id: "sheets",
+    category: "Escritório",
     name: "LocalSheets",
     description: "Planilha (Excel) — XLSX/CSV, fórmulas, IA que edita células",
     kind: "app",
@@ -45,6 +49,7 @@ export const CATALOG: CatalogApp[] = [
   },
   {
     id: "slides",
+    category: "Escritório",
     name: "LocalSlides",
     description: "Apresentações (PowerPoint) — canvas, PPTX, IA gera o deck",
     kind: "app",
@@ -58,6 +63,7 @@ export const CATALOG: CatalogApp[] = [
   },
   {
     id: "code",
+    category: "Desenvolvimento",
     name: "LocalCode",
     description: "Editor de código — LSP, debugger, git, terminal, IA agente",
     kind: "app",
@@ -74,6 +80,7 @@ export const CATALOG: CatalogApp[] = [
   },
   {
     id: "data",
+    category: "Dados e conhecimento",
     name: "LocalData",
     description: "Banco de dados visual (Airtable) — tabelas tipadas, kanban, IA",
     kind: "app",
@@ -88,6 +95,7 @@ export const CATALOG: CatalogApp[] = [
   },
   {
     id: "pdf",
+    category: "Escritório",
     name: "LocalPDF",
     description: "Editor de PDF — organizar páginas, anotar, assinar, formulários, IA",
     kind: "app",
@@ -101,6 +109,7 @@ export const CATALOG: CatalogApp[] = [
   },
   {
     id: "zim",
+    category: "Dados e conhecimento",
     name: "LocalZIM",
     description: "Wikipédia e bibliotecas offline (Kiwix) — lê arquivos .zim",
     kind: "app",
@@ -114,6 +123,7 @@ export const CATALOG: CatalogApp[] = [
   },
   {
     id: "taylorchat",
+    category: "Comunicação",
     name: "TaylorChat",
     description: "Mensageiro P2P offline — sem servidor, cifrado ponta a ponta, IA local",
     kind: "app",
@@ -128,6 +138,7 @@ export const CATALOG: CatalogApp[] = [
   {
     // id mantém "taylormind" por compatibilidade (chave de installed.json/dispatch).
     id: "taylormind",
+    category: "Dados e conhecimento",
     name: "LocalMind",
     description: "Mapas mentais (XMind) — IA gera/expande o mapa",
     kind: "app",
@@ -141,6 +152,7 @@ export const CATALOG: CatalogApp[] = [
   },
   {
     id: "localai",
+    category: "Inteligência artificial",
     name: "LocalAI Studio",
     description: "Roda modelos GGUF locais (LM Studio) — CPU e iGPU no talo",
     kind: "app",
@@ -154,6 +166,7 @@ export const CATALOG: CatalogApp[] = [
   },
   {
     id: "openobsidian",
+    category: "Dados e conhecimento",
     name: "OpenObsidian",
     description: "Notas e base de conhecimento (Obsidian) — grafo, mermaid, IA",
     kind: "app",

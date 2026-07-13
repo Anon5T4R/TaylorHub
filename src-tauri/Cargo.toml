@@ -1,6 +1,6 @@
 [package]
 name = "hub"
-version = "0.5.0"
+version = "0.6.0"
 description = "TaylorHub - instala, atualiza e abre os apps da suite Local"
 authors = ["Joao / Taylor"]
 edition = "2021"
@@ -22,6 +22,8 @@ futures-util = "0.3"
 base64 = "0.22"
 # Token do GitHub (opcional) no cofre do SO — DPAPI no Windows, Secret Service no Linux.
 keyring = { version = "3", features = ["windows-native", "apple-native", "sync-secret-service"] }
+# Sleep assíncrono do polling do device flow (o reqwest já traz o tokio).
+tokio = { version = "1", features = ["time"] }
 
 [target.'cfg(windows)'.dependencies]
 winreg = "0.52"

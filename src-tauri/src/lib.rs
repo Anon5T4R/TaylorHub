@@ -390,6 +390,112 @@ fn github_token_status() -> bool {
     github_token().is_some()
 }
 
+/// OAuth App do GitHub com device flow habilitado (Settings → Developer
+/// settings → OAuth Apps). Vazio = build sem login pelo navegador; o front
+/// cai no fallback de abrir a página de criação de token pré-preenchida.
+const GITHUB_CLIENT_ID: &str = "";
+
+#[tauri::command]
+fn github_client_configured() -> bool {
+    !GITHUB_CLIENT_ID.is_empty()
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DeviceStart {
+    user_code: String,
+    verification_uri: String,
+    device_code: String,
+    interval: u64,
+    expires_in: u64,
+}
+
+/// Passo 1 do device flow: pede o código que o usuário digita no navegador.
+#[tauri::command]
+async fn github_device_start() -> Result<DeviceStart, String> {
+    if GITHUB_CLIENT_ID.is_empty() {
+        return Err("Login pelo navegador não configurado neste build".into());
+    }
+    let resp = http_client()?
+        .post("https://github.com/login/device/code")
+        .header("Accept", "application/json")
+        .form(&[("client_id", GITHUB_CLIENT_ID), ("scope", "")])
+        .send()
+        .await
+        .map_err(|e| format!("Falha de rede: {e}"))?;
+    let v: serde_json::Value = resp.json().await.map_err(|e| e.to_string())?;
+    let get = |k: &str| v[k].as_str().unwrap_or("").to_string();
+    let device_code = get("device_code");
+    if device_code.is_empty() {
+        return Err(format!("GitHub não iniciou o login: {v}"));
+    }
+    Ok(DeviceStart {
+        user_code: get("user_code"),
+        verification_uri: get("verification_uri"),
+        device_code,
+        interval: v["interval"].as_u64().unwrap_or(5),
+        expires_in: v["expires_in"].as_u64().unwrap_or(900),
+    })
+}
+
+/// Passo 2: espera o usuário autorizar no navegador; guarda o token no cofre.
+/// Devolve o limite de requisições/hora da conta.
+#[tauri::command]
+async fn github_device_poll(
+    device_code: String,
+    interval: u64,
+    expires_in: u64,
+) -> Result<u64, String> {
+    let deadline = now_secs() + expires_in.clamp(60, 1800);
+    let mut wait = interval.max(5);
+    loop {
+        if now_secs() > deadline {
+            return Err("Tempo esgotado — tente de novo".into());
+        }
+        tokio::time::sleep(std::time::Duration::from_secs(wait)).await;
+        let resp = http_client()?
+            .post("https://github.com/login/oauth/access_token")
+            .header("Accept", "application/json")
+            .form(&[
+                ("client_id", GITHUB_CLIENT_ID),
+                ("device_code", device_code.as_str()),
+                ("grant_type", "urn:ietf:params:oauth:grant-type:device_code"),
+            ])
+            .send()
+            .await
+            .map_err(|e| format!("Falha de rede: {e}"))?;
+        let v: serde_json::Value = resp.json().await.map_err(|e| e.to_string())?;
+        if let Some(tok) = v["access_token"].as_str() {
+            keyring::Entry::new(KEYRING_SERVICE, KEYRING_USER)
+                .and_then(|e| e.set_password(tok))
+                .map_err(|e| format!("Falha ao guardar no cofre do sistema: {e}"))?;
+            // limite real da conta (melhor esforço — o token já está salvo)
+            let limit = async {
+                let r = http_client()
+                    .ok()?
+                    .get("https://api.github.com/rate_limit")
+                    .header("Accept", "application/vnd.github+json")
+                    .header("Authorization", format!("Bearer {tok}"))
+                    .send()
+                    .await
+                    .ok()?;
+                let b: serde_json::Value = r.json().await.ok()?;
+                b["resources"]["core"]["limit"].as_u64()
+            }
+            .await
+            .unwrap_or(5000);
+            return Ok(limit);
+        }
+        match v["error"].as_str() {
+            Some("authorization_pending") | None => {}
+            Some("slow_down") => wait += 5,
+            Some("expired_token") => return Err("O código expirou — tente de novo".into()),
+            Some("access_denied") => return Err("Login cancelado no GitHub".into()),
+            Some(e) => return Err(format!("GitHub: {e}")),
+        }
+    }
+}
+
 /// Salva o token (validando em /rate_limit) ou remove (string vazia).
 /// Devolve o limite de requisições/hora que o token concede.
 #[tauri::command]
@@ -1660,6 +1766,9 @@ pub fn run() {
             update_self,
             github_token_status,
             set_github_token,
+            github_client_configured,
+            github_device_start,
+            github_device_poll,
             add_custom_repo,
             list_custom_repos,
             remove_custom_repo,

@@ -86,6 +86,32 @@ export async function setGithubToken(token: string): Promise<number> {
   return invoke<number>("set_github_token", { token });
 }
 
+/** Build tem OAuth App configurado? (login pelo navegador via device flow) */
+export async function githubClientConfigured(): Promise<boolean> {
+  return invoke<boolean>("github_client_configured");
+}
+
+export interface DeviceStart {
+  userCode: string;
+  verificationUri: string;
+  deviceCode: string;
+  interval: number;
+  expiresIn: number;
+}
+
+export async function githubDeviceStart(): Promise<DeviceStart> {
+  return invoke<DeviceStart>("github_device_start");
+}
+
+/** Bloqueia até o usuário autorizar no navegador; devolve o limite de req/h. */
+export async function githubDevicePoll(
+  deviceCode: string,
+  interval: number,
+  expiresIn: number,
+): Promise<number> {
+  return invoke<number>("github_device_poll", { deviceCode, interval, expiresIn });
+}
+
 export async function getLatestRelease(repo: string, force = false): Promise<ReleaseInfo> {
   return invoke<ReleaseInfo>("get_latest_release", { repo, force });
 }
