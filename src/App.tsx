@@ -86,6 +86,7 @@ const CATEGORY_ORDER = [
   "Desenvolvimento",
   "Comunicação",
   "Inteligência artificial",
+  "Mídia",
   CUSTOM_CATEGORY,
 ];
 
