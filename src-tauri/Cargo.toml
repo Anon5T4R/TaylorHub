@@ -1,6 +1,6 @@
 [package]
 name = "hub"
-version = "0.4.1"
+version = "0.5.0"
 description = "TaylorHub - instala, atualiza e abre os apps da suite Local"
 authors = ["Joao / Taylor"]
 edition = "2021"
@@ -20,6 +20,8 @@ serde_json = "1"
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls", "stream"] }
 futures-util = "0.3"
 base64 = "0.22"
+# Token do GitHub (opcional) no cofre do SO — DPAPI no Windows, Secret Service no Linux.
+keyring = { version = "3", features = ["windows-native", "apple-native", "sync-secret-service"] }
 
 [target.'cfg(windows)'.dependencies]
 winreg = "0.52"

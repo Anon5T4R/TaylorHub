@@ -2,14 +2,18 @@ import { useEffect, useMemo, useState } from "react";
 import { getVersion } from "@tauri-apps/api/app";
 import { CATALOG, compareVersions, extensionRoutes, type CatalogApp } from "./catalog";
 import {
+  addCustomRepo,
   applyAssociations,
   detectApps,
   getIcon,
   getLatestRelease,
   getOs,
+  githubTokenStatus,
   inTauri,
   installApp,
+  installCustomApp,
   launchApp,
+  listCustomRepos,
   onProgress,
   clearRecents,
   HUB_REPO,
@@ -17,10 +21,13 @@ import {
   readDispatch,
   readRecents,
   recreateShortcuts,
+  removeCustomRepo,
   removeRecent,
+  setGithubToken,
   setRecentPinned,
   uninstallApp,
   updateSelf,
+  type CustomApp,
   type RecentEntry,
   type AssocEntry,
   type InstalledInfo,
@@ -66,6 +73,47 @@ function shortClock(ms: number): string {
   return new Date(ms).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
 }
 
+/** Card genérico pra repositório do usuário, no mesmo formato do catálogo. */
+function customAsCatalog(c: CustomApp): CatalogApp {
+  return {
+    id: c.id,
+    name: c.name,
+    description: `Repositório do usuário — ${c.repo}`,
+    kind: "app",
+    repo: c.repo,
+    assets: { win: c.winAsset, linux: c.linuxAsset },
+    silentArgs: ["/S"],
+    exe: c.exe || `${c.name}.exe`,
+    extensions: [],
+    accent: "#64748b",
+  };
+}
+
+const ORDER_KEY = "hub.appOrder";
+
+function loadOrder(): string[] {
+  try {
+    const v = JSON.parse(localStorage.getItem(ORDER_KEY) ?? "[]");
+    return Array.isArray(v) ? v : [];
+  } catch {
+    return [];
+  }
+}
+
+/** Aplica a ordem salva: ids conhecidos primeiro (na ordem), o resto no fim. */
+function sortByOrder(apps: CatalogApp[], order: string[]): CatalogApp[] {
+  if (!order.length) return apps;
+  const pos = new Map(order.map((id, i) => [id, i]));
+  return [...apps].sort((a, b) => {
+    const pa = pos.get(a.id);
+    const pb = pos.get(b.id);
+    if (pa == null && pb == null) return 0;
+    if (pa == null) return 1;
+    if (pb == null) return -1;
+    return pa - pb;
+  });
+}
+
 /** Ícone real do app (cache local via get_icon); cai pra letra inicial se ainda não baixado. */
 function AppAvatar({ app, src }: { app: CatalogApp; src?: string }) {
   const [broken, setBroken] = useState(false);
@@ -106,10 +154,31 @@ export default function App() {
   const [checkedAt, setCheckedAt] = useState<number | null>(null);
   const [icons, setIcons] = useState<Record<string, string>>({});
 
+  // repositórios do usuário + login opcional no GitHub + ordem dos cards
+  const [customApps, setCustomApps] = useState<CustomApp[]>([]);
+  const [repoInput, setRepoInput] = useState("");
+  const [repoMsg, setRepoMsg] = useState("");
+  const [repoBusy, setRepoBusy] = useState(false);
+  const [ghLogged, setGhLogged] = useState(false);
+  const [ghOpen, setGhOpen] = useState(false);
+  const [ghToken, setGhToken] = useState("");
+  const [ghMsg, setGhMsg] = useState("");
+  const [order, setOrder] = useState<string[]>(loadOrder);
+  const [dragId, setDragId] = useState<string | null>(null);
+
   const routeOptions = useMemo(() => extensionRoutes(), []);
 
-  const refreshInstalled = async () => {
-    const infos = await detectApps(CATALOG);
+  const gridApps = useMemo(
+    () => sortByOrder([...CATALOG, ...customApps.map(customAsCatalog)], order),
+    [customApps, order],
+  );
+
+  const refreshInstalled = async (customs: CustomApp[] = customApps) => {
+    const specs = [
+      ...CATALOG.map((a) => ({ id: a.id, name: a.name, exe: a.exe })),
+      ...customs.map((c) => ({ id: c.id, name: c.name, exe: c.exe || `${c.name}.exe` })),
+    ];
+    const infos = await detectApps(specs);
     const map: Record<string, InstalledInfo> = {};
     for (const info of infos) map[info.id] = info;
     setInstalled(map);
@@ -131,11 +200,15 @@ export default function App() {
   // Consulta a última release de cada app + do próprio Hub. `force` fura o cache
   // (TTL de 30 min): o carregamento inicial usa o cache; o botão "Verificar
   // atualizações" força a consulta pra não ficar preso numa versão vencida.
-  const loadReleases = async (force = false) => {
+  const loadReleases = async (force = false, customs: CustomApp[] = customApps) => {
     setChecking(true);
     try {
+      const targets = [
+        ...CATALOG.map((a) => ({ id: a.id, repo: a.repo })),
+        ...customs.map((c) => ({ id: c.id, repo: c.repo })),
+      ];
       const results = await Promise.allSettled(
-        CATALOG.map(async (app) => {
+        targets.map(async (app) => {
           const rel = await getLatestRelease(app.repo, force);
           setLatest((prev) => ({ ...prev, [app.id]: rel }));
         }),
@@ -179,7 +252,10 @@ export default function App() {
     (async () => {
       try {
         setOs(await getOs());
-        await refreshInstalled();
+        const customs = await listCustomRepos();
+        setCustomApps(customs);
+        githubTokenStatus().then(setGhLogged).catch(() => {});
+        await refreshInstalled(customs);
         setRecents(await readRecents());
         // Rotas salvas anteriormente sobrescrevem os defaults.
         const saved = await readDispatch();
@@ -196,7 +272,7 @@ export default function App() {
         // Carregamento inicial: usa os caches (rápido e sem gastar rate-limit).
         // Ícones em paralelo — não precisam esperar as releases.
         void loadIcons(false);
-        await loadReleases(false);
+        await loadReleases(false, customs);
       } catch (e) {
         setErrors((prev) => ({ ...prev, _global: String(e) }));
       }
@@ -205,18 +281,27 @@ export default function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tauri]);
 
+  const isCustom = (id: string) => id.startsWith("custom-");
+
   const doInstall = async (app: CatalogApp) => {
     setBusy((b) => ({ ...b, [app.id]: true }));
     setErrors((e) => ({ ...e, [app.id]: "" }));
     try {
-      // Linux: se já existe um AppImage (mesmo instalado por fora), atualiza NO MESMO caminho.
-      const current = installed[app.id];
-      const currentPath =
-        os !== "windows" && current?.installed && current.source !== "deb"
-          ? current.exe
-          : undefined;
-      const info = await installApp(app, os, currentPath);
-      setInstalled((prev) => ({ ...prev, [app.id]: info }));
+      if (isCustom(app.id)) {
+        const info = await installCustomApp(app.id);
+        setInstalled((prev) => ({ ...prev, [app.id]: info }));
+        // nome/exe reais são descobertos na instalação — recarrega a lista
+        setCustomApps(await listCustomRepos());
+      } else {
+        // Linux: se já existe um AppImage (mesmo instalado por fora), atualiza NO MESMO caminho.
+        const current = installed[app.id];
+        const currentPath =
+          os !== "windows" && current?.installed && current.source !== "deb"
+            ? current.exe
+            : undefined;
+        const info = await installApp(app, os, currentPath);
+        setInstalled((prev) => ({ ...prev, [app.id]: info }));
+      }
     } catch (e) {
       setErrors((prev) => ({ ...prev, [app.id]: String(e) }));
     } finally {
@@ -226,6 +311,74 @@ export default function App() {
         delete next[app.id];
         return next;
       });
+    }
+  };
+
+  const doAddRepo = async () => {
+    const input = repoInput.trim();
+    if (!input || repoBusy) return;
+    setRepoBusy(true);
+    setRepoMsg("Consultando a release…");
+    try {
+      const c = await addCustomRepo(input);
+      const customs = [...customApps, c];
+      setCustomApps(customs);
+      setRepoInput("");
+      setRepoMsg(`${c.name} adicionado.`);
+      void refreshInstalled(customs);
+      getLatestRelease(c.repo).then((rel) =>
+        setLatest((prev) => ({ ...prev, [c.id]: rel })),
+      );
+    } catch (e) {
+      setRepoMsg(String(e));
+    } finally {
+      setRepoBusy(false);
+    }
+  };
+
+  const doRemoveCustom = async (app: CatalogApp) => {
+    if (!window.confirm(`Remover ${app.name} da lista do Hub?\n(o app instalado NÃO é desinstalado)`)) {
+      return;
+    }
+    await removeCustomRepo(app.id);
+    setCustomApps((list) => list.filter((c) => c.id !== app.id));
+  };
+
+  // ordem dos cards: arrastar um card sobre outro insere na posição dele
+  const moveApp = (fromId: string, toId: string) => {
+    const ids = gridApps.map((a) => a.id);
+    const from = ids.indexOf(fromId);
+    const to = ids.indexOf(toId);
+    if (from < 0 || to < 0) return;
+    ids.splice(to, 0, ids.splice(from, 1)[0]);
+    setOrder(ids);
+    localStorage.setItem(ORDER_KEY, JSON.stringify(ids));
+  };
+
+  const resetOrder = () => {
+    setOrder([]);
+    localStorage.removeItem(ORDER_KEY);
+  };
+
+  const saveGhToken = async () => {
+    setGhMsg("Validando…");
+    try {
+      const limit = await setGithubToken(ghToken);
+      setGhLogged(true);
+      setGhToken("");
+      setGhMsg(`Token salvo no cofre do sistema — ${limit.toLocaleString("pt-BR")} requisições/hora.`);
+    } catch (e) {
+      setGhMsg(String(e));
+    }
+  };
+
+  const clearGhToken = async () => {
+    try {
+      await setGithubToken("");
+      setGhLogged(false);
+      setGhMsg("Token removido.");
+    } catch (e) {
+      setGhMsg(String(e));
     }
   };
 
@@ -392,6 +545,20 @@ export default function App() {
         {tauri && (
           <div className="hub-refresh">
             <button
+              className="gh-btn"
+              onClick={() => {
+                setGhMsg("");
+                setGhOpen(true);
+              }}
+              title={
+                ghLogged
+                  ? "Logado no GitHub — 5.000 requisições/hora"
+                  : "Login opcional no GitHub (evita o erro 403 de rate limit)"
+              }
+            >
+              {ghLogged ? "GitHub ✓" : "GitHub"}
+            </button>
+            <button
               className="refresh-btn"
               onClick={() => {
                 void loadIcons(true);
@@ -436,8 +603,26 @@ export default function App() {
               {shortcutMsg && <span className="assoc-msg">{shortcutMsg}</span>}
             </div>
           )}
+          <div className="repo-bar">
+            <input
+              value={repoInput}
+              onChange={(e) => setRepoInput(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") void doAddRepo();
+              }}
+              placeholder="github.com/dono/repo — adicionar app de fora do catálogo"
+              spellCheck={false}
+            />
+            <button className="primary" onClick={doAddRepo} disabled={!tauri || repoBusy || !repoInput.trim()}>
+              {repoBusy ? "Adicionando…" : "Adicionar repositório"}
+            </button>
+            <button onClick={resetOrder} title="Voltar à ordem padrão dos cards (dica: arraste os cards pra reordenar)">
+              ↺ ordem
+            </button>
+            {repoMsg && <span className="assoc-msg">{repoMsg}</span>}
+          </div>
           <div className="hub-grid">
-          {CATALOG.map((app) => {
+          {gridApps.map((app) => {
             const info = installed[app.id];
             const rel = latest[app.id];
             const isDeb = info?.source === "deb";
@@ -450,7 +635,20 @@ export default function App() {
             const prog = progress[app.id];
             const isBusy = !!busy[app.id];
             return (
-              <div className="card" key={app.id} style={{ borderTopColor: app.accent }}>
+              <div
+                className={`card${dragId === app.id ? " dragging" : ""}`}
+                key={app.id}
+                style={{ borderTopColor: app.accent }}
+                draggable
+                onDragStart={() => setDragId(app.id)}
+                onDragEnd={() => setDragId(null)}
+                onDragOver={(e) => e.preventDefault()}
+                onDrop={(e) => {
+                  e.preventDefault();
+                  if (dragId && dragId !== app.id) moveApp(dragId, app.id);
+                  setDragId(null);
+                }}
+              >
                 <div className="card-head">
                   <AppAvatar app={app} src={icons[app.id] ?? (tauri ? undefined : app.iconUrl)} />
                   <div>
@@ -514,6 +712,15 @@ export default function App() {
                       onClick={() => doUninstall(app)}
                     >
                       Desinstalar
+                    </button>
+                  )}
+                  {isCustom(app.id) && (
+                    <button
+                      disabled={isBusy}
+                      title="Tirar da lista do Hub (não desinstala)"
+                      onClick={() => doRemoveCustom(app)}
+                    >
+                      Remover da lista
                     </button>
                   )}
                 </div>
@@ -638,6 +845,44 @@ export default function App() {
             {assocMsg && <span className="assoc-msg">{assocMsg}</span>}
           </div>
         </main>
+      )}
+
+      {ghOpen && (
+        <div className="modal-overlay" onClick={() => setGhOpen(false)}>
+          <div className="modal" onClick={(e) => e.stopPropagation()}>
+            <h3>Login no GitHub (opcional)</h3>
+            <p>
+              Sem login, o GitHub limita as consultas anônimas a <strong>60/hora por IP</strong> —
+              abrir o Hub várias vezes seguidas dá o erro 403. Com um token, o limite vira{" "}
+              <strong>5.000/hora</strong>.
+            </p>
+            <p>
+              O token fica guardado no <strong>cofre do sistema</strong> (DPAPI/Secret Service),
+              nunca em arquivo, e só é usado pra consultar e baixar releases. Crie um em{" "}
+              <em>github.com → Settings → Developer settings → Personal access tokens</em> — sem
+              marcar <strong>nenhum</strong> escopo (leitura pública basta).
+            </p>
+            <input
+              type="password"
+              value={ghToken}
+              onChange={(e) => setGhToken(e.target.value)}
+              placeholder="ghp_… ou github_pat_…"
+              spellCheck={false}
+            />
+            <div className="modal-actions">
+              <button className="primary" onClick={saveGhToken} disabled={!ghToken.trim()}>
+                Salvar token
+              </button>
+              {ghLogged && (
+                <button className="danger" onClick={clearGhToken}>
+                  Remover token
+                </button>
+              )}
+              <button onClick={() => setGhOpen(false)}>Fechar</button>
+            </div>
+            {ghMsg && <p className="assoc-msg">{ghMsg}</p>}
+          </div>
+        </div>
       )}
 
       <footer className="hub-footer">

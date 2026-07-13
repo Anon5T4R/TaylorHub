@@ -363,6 +363,62 @@ fn http_client() -> Result<reqwest::Client, String> {
         .map_err(|e| e.to_string())
 }
 
+// ---------------------------------------------------------------------------
+// Token do GitHub (opcional) — sobe o rate limit de 60/h (anônimo) pra 5000/h
+// ---------------------------------------------------------------------------
+
+const KEYRING_SERVICE: &str = "TaylorHub";
+const KEYRING_USER: &str = "github-token";
+
+/// Token guardado no cofre do SO (DPAPI/Secret Service) — nunca em arquivo.
+fn github_token() -> Option<String> {
+    let entry = keyring::Entry::new(KEYRING_SERVICE, KEYRING_USER).ok()?;
+    entry.get_password().ok().filter(|t| !t.is_empty())
+}
+
+/// Anexa o Authorization quando há token. O reqwest remove o header sozinho
+/// em redirects pra outro host (ex.: download que pula pro S3 do GitHub).
+fn with_auth(req: reqwest::RequestBuilder) -> reqwest::RequestBuilder {
+    match github_token() {
+        Some(t) => req.header("Authorization", format!("Bearer {t}")),
+        None => req,
+    }
+}
+
+#[tauri::command]
+fn github_token_status() -> bool {
+    github_token().is_some()
+}
+
+/// Salva o token (validando em /rate_limit) ou remove (string vazia).
+/// Devolve o limite de requisições/hora que o token concede.
+#[tauri::command]
+async fn set_github_token(token: String) -> Result<u64, String> {
+    let token = token.trim().to_string();
+    let entry = keyring::Entry::new(KEYRING_SERVICE, KEYRING_USER)
+        .map_err(|e| format!("Cofre do sistema indisponível: {e}"))?;
+    if token.is_empty() {
+        let _ = entry.delete_credential();
+        return Ok(0);
+    }
+    let resp = http_client()?
+        .get("https://api.github.com/rate_limit")
+        .header("Accept", "application/vnd.github+json")
+        .header("Authorization", format!("Bearer {token}"))
+        .send()
+        .await
+        .map_err(|e| format!("Falha de rede: {e}"))?;
+    if !resp.status().is_success() {
+        return Err(format!("O GitHub recusou o token ({})", resp.status()));
+    }
+    let body: serde_json::Value = resp.json().await.map_err(|e| e.to_string())?;
+    let limit = body["resources"]["core"]["limit"].as_u64().unwrap_or(5000);
+    entry
+        .set_password(&token)
+        .map_err(|e| format!("Falha ao guardar no cofre do sistema: {e}"))?;
+    Ok(limit)
+}
+
 /// Consulta a release mais recente, com cache local (TTL de 30 min).
 /// `force` pula a checagem de TTL (botão "Verificar atualizações"), mas o
 /// resultado ainda alimenta o cache e a falha ainda cai no fallback.
@@ -388,12 +444,14 @@ async fn fetch_latest(repo: &str, force: bool) -> Result<ReleaseInfo, String> {
 
 async fn fetch_latest_remote(repo: &str) -> Result<ReleaseInfo, String> {
     let url = format!("https://api.github.com/repos/{}/releases/latest", repo);
-    let resp = http_client()?
-        .get(&url)
-        .header("Accept", "application/vnd.github+json")
-        .send()
-        .await
-        .map_err(|e| format!("Falha de rede em {}: {}", repo, e))?;
+    let resp = with_auth(
+        http_client()?
+            .get(&url)
+            .header("Accept", "application/vnd.github+json"),
+    )
+    .send()
+    .await
+    .map_err(|e| format!("Falha de rede em {}: {}", repo, e))?;
     let status = resp.status();
     if !status.is_success() {
         let hint = if status == 403 || status == 429 {
@@ -556,8 +614,7 @@ async fn download_asset(
     let dir = config_dir().join("downloads");
     ensure_dir(&dir)?;
     let dest = dir.join(&asset.name);
-    let resp = http_client()?
-        .get(&asset.url)
+    let resp = with_auth(http_client()?.get(&asset.url))
         .send()
         .await
         .map_err(|e| format!("Falha ao baixar {}: {}", asset.name, e))?;
@@ -735,6 +792,315 @@ async fn install_app(app: tauri::AppHandle, spec: InstallSpec) -> Result<Install
     .await
     .map_err(|e| format!("Falha na thread de instalação: {}", e))??;
 
+    Ok(info)
+}
+
+// ---------------------------------------------------------------------------
+// Repositórios do usuário — apps de fora do catálogo, pelo link do GitHub
+// ---------------------------------------------------------------------------
+
+#[derive(Serialize, Deserialize, Clone, Default)]
+#[serde(rename_all = "camelCase", default)]
+pub struct CustomApp {
+    id: String,
+    /// Começa como o nome do repo; vira o DisplayName real do registro
+    /// depois da primeira instalação (diff de chaves de Uninstall).
+    name: String,
+    repo: String,
+    win_asset: String,
+    linux_asset: String,
+    /// Nome do executável (descoberto no diff pós-instalação).
+    exe: String,
+}
+
+fn custom_apps_path() -> PathBuf {
+    config_dir().join("custom_apps.json")
+}
+
+fn load_custom_apps() -> Vec<CustomApp> {
+    read_json(&custom_apps_path()).unwrap_or_default()
+}
+
+fn save_custom_apps(list: &Vec<CustomApp>) -> Result<(), String> {
+    write_json(&custom_apps_path(), list)
+}
+
+/// Aceita "owner/repo", URL completa do GitHub ou variações com .git no fim.
+fn parse_repo(input: &str) -> Option<String> {
+    let s = input.trim();
+    let s = s
+        .strip_prefix("https://")
+        .or_else(|| s.strip_prefix("http://"))
+        .unwrap_or(s);
+    let s = s.strip_prefix("www.").unwrap_or(s);
+    let s = s.strip_prefix("github.com/").unwrap_or(s);
+    let s = s.trim_matches('/').trim_end_matches(".git");
+    let parts: Vec<&str> = s.split('/').collect();
+    if parts.len() != 2 {
+        return None;
+    }
+    let ok = |p: &str| {
+        !p.is_empty()
+            && p.chars()
+                .all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.'))
+    };
+    (ok(parts[0]) && ok(parts[1])).then(|| format!("{}/{}", parts[0], parts[1]))
+}
+
+/// Detecta os assets instaláveis da release (glob mais específico primeiro).
+fn guess_assets(assets: &[AssetInfo]) -> (String, String) {
+    let pick = |patterns: &[&str]| -> String {
+        patterns
+            .iter()
+            .find(|p| assets.iter().any(|a| glob_match(p, &a.name)))
+            .map(|p| p.to_string())
+            .unwrap_or_default()
+    };
+    let win = pick(&["*x64-setup.exe", "*setup*.exe", "*install*.exe", "*.exe"]);
+    let linux = pick(&["*amd64.appimage", "*x86_64.appimage", "*.appimage"]);
+    (win, linux)
+}
+
+#[tauri::command]
+async fn add_custom_repo(input: String) -> Result<CustomApp, String> {
+    let repo = parse_repo(&input)
+        .ok_or("Endereço inválido — cole o link do repositório (github.com/dono/repo)")?;
+    let mut list = load_custom_apps();
+    if list.iter().any(|c| c.repo.eq_ignore_ascii_case(&repo)) {
+        return Err("Esse repositório já está na lista".into());
+    }
+    let release = fetch_latest(&repo, true).await?;
+    let (win_asset, linux_asset) = guess_assets(&release.assets);
+    if win_asset.is_empty() && linux_asset.is_empty() {
+        return Err(format!(
+            "A release {} de {} não tem instalador .exe nem AppImage nos assets",
+            release.tag, repo
+        ));
+    }
+    let slug: String = repo
+        .to_lowercase()
+        .chars()
+        .map(|c| if c.is_ascii_alphanumeric() { c } else { '-' })
+        .collect();
+    let app = CustomApp {
+        id: format!("custom-{slug}"),
+        name: repo.split('/').nth(1).unwrap_or(&repo).to_string(),
+        repo,
+        win_asset,
+        linux_asset,
+        exe: String::new(),
+    };
+    list.push(app.clone());
+    save_custom_apps(&list)?;
+    Ok(app)
+}
+
+#[tauri::command]
+fn list_custom_repos() -> Vec<CustomApp> {
+    load_custom_apps()
+}
+
+/// Tira da lista do Hub (NÃO desinstala o app).
+#[tauri::command]
+fn remove_custom_repo(id: String) -> Result<(), String> {
+    let mut list = load_custom_apps();
+    list.retain(|c| c.id != id);
+    save_custom_apps(&list)
+}
+
+/// Chaves de Uninstall existentes, com prefixo do hive (pro diff pós-instalação).
+#[cfg(windows)]
+fn uninstall_keys() -> std::collections::HashSet<String> {
+    use winreg::enums::{HKEY_CURRENT_USER, HKEY_LOCAL_MACHINE};
+    use winreg::RegKey;
+    let hives: [(winreg::HKEY, &str, &str); 3] = [
+        (HKEY_CURRENT_USER, r"Software\Microsoft\Windows\CurrentVersion\Uninstall", "hkcu"),
+        (HKEY_LOCAL_MACHINE, r"Software\Microsoft\Windows\CurrentVersion\Uninstall", "hklm"),
+        (
+            HKEY_LOCAL_MACHINE,
+            r"Software\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall",
+            "wow",
+        ),
+    ];
+    let mut out = std::collections::HashSet::new();
+    for (hive, path, tag) in hives {
+        let root = RegKey::predef(hive);
+        if let Ok(unin) = root.open_subkey(path) {
+            for key in unin.enum_keys().flatten() {
+                out.insert(format!("{tag}\\{key}"));
+            }
+        }
+    }
+    out
+}
+
+/// Lê (DisplayName, DisplayVersion, exe, InstallLocation) de uma chave taggeada.
+#[cfg(windows)]
+fn read_uninstall_entry(tagged: &str) -> Option<(String, String, String, String)> {
+    use winreg::enums::{HKEY_CURRENT_USER, HKEY_LOCAL_MACHINE};
+    use winreg::RegKey;
+    let (tag, key) = tagged.split_once('\\')?;
+    let (hive, path) = match tag {
+        "hkcu" => (HKEY_CURRENT_USER, r"Software\Microsoft\Windows\CurrentVersion\Uninstall"),
+        "hklm" => (HKEY_LOCAL_MACHINE, r"Software\Microsoft\Windows\CurrentVersion\Uninstall"),
+        _ => (
+            HKEY_LOCAL_MACHINE,
+            r"Software\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall",
+        ),
+    };
+    let sub = RegKey::predef(hive).open_subkey(path).ok()?.open_subkey(key).ok()?;
+    let name: String = sub.get_value("DisplayName").unwrap_or_default();
+    if name.is_empty() {
+        return None;
+    }
+    let version: String = sub.get_value("DisplayVersion").unwrap_or_default();
+    let mut location: String = sub.get_value("InstallLocation").unwrap_or_default();
+    location = location.trim_matches('"').to_string();
+    let icon: String = sub.get_value("DisplayIcon").unwrap_or_default();
+    let icon = icon.split(',').next().unwrap_or("").trim_matches('"').to_string();
+    let mut exe = String::new();
+    if !icon.is_empty() && icon.to_lowercase().ends_with(".exe") && Path::new(&icon).exists() {
+        exe = icon.clone();
+        if location.is_empty() {
+            location = Path::new(&icon)
+                .parent()
+                .map(|p| p.to_string_lossy().to_string())
+                .unwrap_or_default();
+        }
+    } else if !location.is_empty() {
+        // Melhor esforço: o primeiro .exe da pasta que não é o desinstalador.
+        if let Ok(rd) = fs::read_dir(&location) {
+            for e in rd.flatten() {
+                let n = e.file_name().to_string_lossy().to_lowercase();
+                if n.ends_with(".exe") && !n.contains("unin") {
+                    exe = e.path().to_string_lossy().to_string();
+                    break;
+                }
+            }
+        }
+    }
+    Some((name, version, exe, location))
+}
+
+#[tauri::command]
+async fn install_custom_app(app: tauri::AppHandle, id: String) -> Result<InstalledInfo, String> {
+    let mut list = load_custom_apps();
+    let idx = list
+        .iter()
+        .position(|c| c.id == id)
+        .ok_or("Repositório não está na lista")?;
+    let c = list[idx].clone();
+
+    let pattern = if cfg!(windows) { c.win_asset.clone() } else { c.linux_asset.clone() };
+    if pattern.is_empty() {
+        return Err("A release desse repositório não tem asset pra esta plataforma".into());
+    }
+    let release = fetch_latest(&c.repo, false).await?;
+    let asset = release
+        .assets
+        .iter()
+        .find(|a| glob_match(&pattern, &a.name))
+        .cloned()
+        .ok_or_else(|| format!("Nenhum asset da release {} casa com '{}'", release.tag, pattern))?;
+    let payload = download_asset(&app, &c.id, &asset).await?;
+    let _ = app.emit(
+        "hub-progress",
+        Progress { id: c.id.clone(), phase: "install".into(), done: 0, total: 0 },
+    );
+
+    let version = release.version.clone();
+    let (info, updated) = tauri::async_runtime::spawn_blocking(
+        move || -> Result<(InstalledInfo, CustomApp), String> {
+            let mut c = c;
+            let spec = InstallSpec {
+                id: c.id.clone(),
+                name: c.name.clone(),
+                repo: c.repo.clone(),
+                asset_pattern: String::new(),
+                silent_args: vec!["/S".into()],
+                exe: c.exe.clone(),
+                current_path: None,
+                icon_url: None,
+            };
+            #[cfg(windows)]
+            {
+                let before = uninstall_keys();
+                install_payload(&spec, &payload)?;
+                let _ = fs::remove_file(&payload);
+                // O que apareceu de novo no registro é o app recém-instalado.
+                let after = uninstall_keys();
+                let found = after
+                    .difference(&before)
+                    .filter_map(|k| read_uninstall_entry(k))
+                    .next();
+                let (name, ver, exe, location) = match found {
+                    Some(f) => f,
+                    None => {
+                        // Instalador só atualizou uma chave existente: busca por nome.
+                        let d = detect_one(&DetectSpec {
+                            id: c.id.clone(),
+                            name: c.name.clone(),
+                            exe: c.exe.clone(),
+                        });
+                        if d.installed {
+                            (c.name.clone(), d.version, d.exe, d.location)
+                        } else {
+                            (c.name.clone(), version.clone(), String::new(), String::new())
+                        }
+                    }
+                };
+                c.name = name;
+                if let Some(f) = Path::new(&exe).file_name() {
+                    c.exe = f.to_string_lossy().to_string();
+                }
+                Ok((
+                    InstalledInfo {
+                        id: c.id.clone(),
+                        installed: true,
+                        version: if ver.is_empty() { version } else { ver },
+                        location,
+                        exe,
+                        source: "registry".into(),
+                    },
+                    c,
+                ))
+            }
+            #[cfg(not(windows))]
+            {
+                let dest = install_payload(&spec, &payload, None)?;
+                let path = linux_installs_path();
+                let mut installs: LinuxInstalls = read_json(&path).unwrap_or_default();
+                installs.0.insert(
+                    c.id.clone(),
+                    LinuxInstall {
+                        version: version.clone(),
+                        path: dest.to_string_lossy().to_string(),
+                    },
+                );
+                write_json(&path, &installs)?;
+                let _ = fs::remove_file(&payload);
+                Ok((
+                    InstalledInfo {
+                        id: c.id.clone(),
+                        installed: true,
+                        version,
+                        location: dest
+                            .parent()
+                            .map(|p| p.to_string_lossy().to_string())
+                            .unwrap_or_default(),
+                        exe: dest.to_string_lossy().to_string(),
+                        source: "hub".into(),
+                    },
+                    c,
+                ))
+            }
+        },
+    )
+    .await
+    .map_err(|e| format!("Falha na thread de instalação: {e}"))??;
+
+    list[idx] = updated;
+    save_custom_apps(&list)?;
     Ok(info)
 }
 
@@ -1292,6 +1658,12 @@ pub fn run() {
             install_app,
             uninstall_app,
             update_self,
+            github_token_status,
+            set_github_token,
+            add_custom_repo,
+            list_custom_repos,
+            remove_custom_repo,
+            install_custom_app,
             recreate_shortcuts,
             launch_app,
             apply_associations,
@@ -1309,9 +1681,47 @@ pub fn run() {
 #[cfg(test)]
 mod tests {
     use super::{
-        cache_is_fresh, fetch_latest, glob_match, version_from_filename, CachedRelease,
-        ReleaseCache, ReleaseInfo, RELEASE_CACHE_TTL_SECS,
+        cache_is_fresh, fetch_latest, glob_match, guess_assets, parse_repo,
+        version_from_filename, AssetInfo, CachedRelease, ReleaseCache, ReleaseInfo,
+        RELEASE_CACHE_TTL_SECS,
     };
+
+    #[test]
+    fn parse_repo_aceita_url_e_owner_repo() {
+        for input in [
+            "Anon5T4R/LocalZIM",
+            "https://github.com/Anon5T4R/LocalZIM",
+            "http://www.github.com/Anon5T4R/LocalZIM/",
+            "github.com/Anon5T4R/LocalZIM.git",
+        ] {
+            assert_eq!(parse_repo(input).as_deref(), Some("Anon5T4R/LocalZIM"), "{input}");
+        }
+        for input in ["", "LocalZIM", "a/b/c", "github.com/só/inválido!", "https://gitlab.com"] {
+            assert_eq!(parse_repo(input), None, "{input}");
+        }
+    }
+
+    #[test]
+    fn guess_assets_prefere_o_glob_mais_especifico() {
+        let mk = |names: &[&str]| -> Vec<AssetInfo> {
+            names
+                .iter()
+                .map(|n| AssetInfo { name: n.to_string(), url: String::new(), size: 0 })
+                .collect()
+        };
+        let assets = mk(&["App_1.0.0_x64-setup.exe", "App_1.0.0_amd64.AppImage", "app.tar.gz"]);
+        let (win, linux) = guess_assets(&assets);
+        assert_eq!(win, "*x64-setup.exe");
+        assert_eq!(linux, "*amd64.appimage");
+
+        let (win, linux) = guess_assets(&mk(&["Foo-Setup-2.1.exe"]));
+        assert_eq!(win, "*setup*.exe");
+        assert_eq!(linux, "");
+
+        let (win, linux) = guess_assets(&mk(&["portable.zip"]));
+        assert_eq!(win, "");
+        assert_eq!(linux, "");
+    }
 
     /// Valida o caminho real de rede (reqwest+rustls → api.github.com) na máquina.
     /// `--ignored` pra não travar CI offline; rodar com: cargo test -- --ignored

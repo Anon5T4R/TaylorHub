@@ -36,14 +36,54 @@ export interface AssocEntry {
   exe: string;
 }
 
+export interface CustomApp {
+  id: string;
+  name: string;
+  repo: string;
+  winAsset: string;
+  linuxAsset: string;
+  exe: string;
+}
+
 export async function getOs(): Promise<string> {
   return invoke<string>("get_os");
 }
 
-export async function detectApps(apps: CatalogApp[]): Promise<InstalledInfo[]> {
+export async function detectApps(
+  apps: { id: string; name: string; exe: string }[],
+): Promise<InstalledInfo[]> {
   return invoke<InstalledInfo[]>("detect_apps", {
     specs: apps.map((a) => ({ id: a.id, name: a.name, exe: a.exe })),
   });
+}
+
+// ---------- repositórios do usuário ----------
+
+export async function listCustomRepos(): Promise<CustomApp[]> {
+  return invoke<CustomApp[]>("list_custom_repos");
+}
+
+export async function addCustomRepo(input: string): Promise<CustomApp> {
+  return invoke<CustomApp>("add_custom_repo", { input });
+}
+
+export async function removeCustomRepo(id: string): Promise<void> {
+  return invoke<void>("remove_custom_repo", { id });
+}
+
+export async function installCustomApp(id: string): Promise<InstalledInfo> {
+  return invoke<InstalledInfo>("install_custom_app", { id });
+}
+
+// ---------- token do GitHub (opcional) ----------
+
+export async function githubTokenStatus(): Promise<boolean> {
+  return invoke<boolean>("github_token_status");
+}
+
+/** Salva (valida antes) ou remove (string vazia). Devolve o limite de req/h. */
+export async function setGithubToken(token: string): Promise<number> {
+  return invoke<number>("set_github_token", { token });
 }
 
 export async function getLatestRelease(repo: string, force = false): Promise<ReleaseInfo> {
