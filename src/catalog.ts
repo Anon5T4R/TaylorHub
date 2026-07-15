@@ -278,6 +278,20 @@ export const CATALOG: CatalogApp[] = [
     accent: "#9333ea",
     iconUrl: "https://raw.githubusercontent.com/Anon5T4R/OpenObsidian/master/resources/icon.png",
   },
+  {
+    id: "keys",
+    category: "Segurança",
+    name: "LocalKeys",
+    description: "Gerenciador de senhas (Bitwarden) — vault .tkeys cifrado, gerador, sem nuvem",
+    kind: "app",
+    repo: "Anon5T4R/LocalKeys",
+    assets: { win: "*_x64-setup.exe", linux: "*_amd64.AppImage" },
+    silentArgs: ["/S"],
+    exe: "LocalKeys.exe",
+    extensions: ["tkeys"],
+    accent: "#4338ca",
+    iconUrl: "https://raw.githubusercontent.com/Anon5T4R/LocalKeys/main/src-tauri/icons/128x128.png",
+  },
 ];
 
 /** Todas as extensões do catálogo, com os apps candidatos (ordem do catálogo). */
