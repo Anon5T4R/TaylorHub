@@ -38,6 +38,16 @@ import {
   type Progress,
   type ReleaseInfo,
 } from "./lib/hub";
+import {
+  appDesc,
+  catLabel,
+  localeTag,
+  LOCALE_LABELS,
+  setLocale,
+  t,
+  useLocale,
+  type Locale,
+} from "./lib/i18n";
 import "./App.css";
 
 type Tab = "apps" | "recentes" | "arquivos";
@@ -60,11 +70,11 @@ function dirName(path: string): string {
 function timeAgo(ts: number): string {
   if (!ts) return "";
   const s = Math.floor(Date.now() / 1000) - ts;
-  if (s < 60) return "agora";
-  if (s < 3600) return `${Math.floor(s / 60)} min atrás`;
-  if (s < 86400) return `${Math.floor(s / 3600)} h atrás`;
-  if (s < 172800) return "ontem";
-  return new Date(ts * 1000).toLocaleDateString();
+  if (s < 60) return t("time.now");
+  if (s < 3600) return t("time.minAgo", { n: Math.floor(s / 60) });
+  if (s < 86400) return t("time.hourAgo", { n: Math.floor(s / 3600) });
+  if (s < 172800) return t("time.yesterday");
+  return new Date(ts * 1000).toLocaleDateString(localeTag());
 }
 
 function fmtBytes(n: number): string {
@@ -96,7 +106,7 @@ function customAsCatalog(c: CustomApp): CatalogApp {
   return {
     id: c.id,
     name: c.name,
-    description: `Repositório do usuário — ${c.repo}`,
+    description: t("custom.repoDesc", { repo: c.repo }),
     kind: "app",
     repo: c.repo,
     assets: { win: c.winAsset, linux: c.linuxAsset },
@@ -144,6 +154,7 @@ function AppAvatar({ app, src }: { app: CatalogApp; src?: string }) {
 
 export default function App() {
   const tauri = inTauri();
+  const locale = useLocale();
   const [tab, setTab] = useState<Tab>("apps");
   const [os, setOs] = useState<string>("windows");
   const [installed, setInstalled] = useState<Record<string, InstalledInfo>>({});
@@ -227,7 +238,7 @@ export default function App() {
         const first = results[0] as PromiseRejectedResult;
         setErrors((prev) => ({
           ...prev,
-          _global: `Não consegui consultar as releases no GitHub — sem isso não aparecem atualizações. (${first.reason})`,
+          _global: t("msg.releasesFail", { reason: String(first.reason) }),
         }));
       } else {
         setErrors((prev) => {
@@ -329,13 +340,13 @@ export default function App() {
     const input = repoInput.trim();
     if (!input || repoBusy) return;
     setRepoBusy(true);
-    setRepoMsg("Consultando a release…");
+    setRepoMsg(t("msg.queryingRelease"));
     try {
       const c = await addCustomRepo(input);
       const customs = [...customApps, c];
       setCustomApps(customs);
       setRepoInput("");
-      setRepoMsg(`${c.name} adicionado.`);
+      setRepoMsg(t("msg.added", { name: c.name }));
       void refreshInstalled(customs);
       getLatestRelease(c.repo).then((rel) =>
         setLatest((prev) => ({ ...prev, [c.id]: rel })),
@@ -348,7 +359,7 @@ export default function App() {
   };
 
   const doRemoveCustom = async (app: CatalogApp) => {
-    if (!window.confirm(`Remover ${app.name} da lista do Hub?\n(o app instalado NÃO é desinstalado)`)) {
+    if (!window.confirm(t("confirm.removeCustom", { name: app.name }))) {
       return;
     }
     await removeCustomRepo(app.id);
@@ -364,7 +375,7 @@ export default function App() {
         "https://github.com/settings/tokens/new?description=TaylorHub%20(leitura%20p%C3%BAblica)&scopes=",
       ).catch(() => {});
       setGhManual(true);
-      setGhMsg("Clique em \"Generate token\" na página que abriu, copie e cole aqui embaixo.");
+      setGhMsg(t("msg.generateHint"));
       return;
     }
     setGhBusy(true);
@@ -375,7 +386,7 @@ export default function App() {
       const limit = await githubDevicePoll(s.deviceCode, s.interval, s.expiresIn);
       setGhLogged(true);
       setGhFlow(null);
-      setGhMsg(`Conectado — ${limit.toLocaleString("pt-BR")} requisições/hora.`);
+      setGhMsg(t("msg.connectedRate", { n: limit.toLocaleString(localeTag()) }));
     } catch (e) {
       setGhFlow(null);
       setGhMsg(String(e));
@@ -385,12 +396,12 @@ export default function App() {
   };
 
   const saveGhToken = async () => {
-    setGhMsg("Validando…");
+    setGhMsg(t("msg.validating"));
     try {
       const limit = await setGithubToken(ghToken);
       setGhLogged(true);
       setGhToken("");
-      setGhMsg(`Token salvo no cofre do sistema — ${limit.toLocaleString("pt-BR")} requisições/hora.`);
+      setGhMsg(t("msg.tokenSaved", { n: limit.toLocaleString(localeTag()) }));
     } catch (e) {
       setGhMsg(String(e));
     }
@@ -400,7 +411,7 @@ export default function App() {
     try {
       await setGithubToken("");
       setGhLogged(false);
-      setGhMsg("Token removido.");
+      setGhMsg(t("msg.tokenRemoved"));
     } catch (e) {
       setGhMsg(String(e));
     }
@@ -419,7 +430,7 @@ export default function App() {
   const doUninstall = async (app: CatalogApp) => {
     const info = installed[app.id];
     if (!info?.installed) return;
-    if (!window.confirm(`Desinstalar ${app.name}?`)) return;
+    if (!window.confirm(t("confirm.uninstall", { name: app.name }))) return;
     setBusy((b) => ({ ...b, [app.id]: true }));
     setErrors((e) => ({ ...e, [app.id]: "" }));
     try {
@@ -435,22 +446,21 @@ export default function App() {
   const doUpdateSelf = async () => {
     if (!hubUpdate) return;
     const ok = window.confirm(
-      `Atualizar o TaylorHub de v${hubUpdate.current} para v${hubUpdate.latest}?\n\n` +
-        (os === "windows"
-          ? "O Hub vai baixar a nova versão, fechar e se reinstalar sozinho."
-          : "O Hub vai substituir o próprio AppImage; depois é só reabrir."),
+      t("confirm.updateSelf", {
+        current: hubUpdate.current,
+        latest: hubUpdate.latest,
+        how: os === "windows" ? t("confirm.updateWin") : t("confirm.updateLinux"),
+      }),
     );
     if (!ok) return;
-    setHubUpdateMsg("Baixando atualização…");
+    setHubUpdateMsg(t("msg.downloadingUpdate"));
     try {
       const result = await updateSelf(os);
       setHubUpdateMsg(
-        result === "restart"
-          ? "Atualizado! Feche e reabra o Hub."
-          : "Instalando — o Hub vai fechar e reabrir atualizado…",
+        result === "restart" ? t("msg.updatedRestart") : t("msg.updatedInstalling"),
       );
     } catch (e) {
-      setHubUpdateMsg(`Erro: ${e}`);
+      setHubUpdateMsg(t("msg.error", { e: String(e) }));
     }
   };
 
@@ -467,7 +477,7 @@ export default function App() {
   const doOpenRecent = async (entry: RecentEntry) => {
     const target = appForFile(entry.path);
     if (!target) {
-      setRecentsMsg(`Nenhum app instalado atende .${extOf(entry.path)} — veja a aba Associações.`);
+      setRecentsMsg(t("msg.noAppForFile", { ext: extOf(entry.path) }));
       return;
     }
     setRecentsMsg("");
@@ -488,7 +498,7 @@ export default function App() {
   };
 
   const doClearRecents = async () => {
-    if (!window.confirm("Limpar a lista de recentes? (os fixados ficam)")) return;
+    if (!window.confirm(t("confirm.clearRecents"))) return;
     setRecents(await clearRecents());
   };
 
@@ -497,23 +507,23 @@ export default function App() {
       (a) => installed[a.id]?.installed && installed[a.id].source !== "deb" && installed[a.id].exe,
     ).map((a) => ({ id: a.id, name: a.name, exe: installed[a.id].exe }));
     if (!entries.length) {
-      setShortcutMsg("Nenhum app instalado (AppImage) pra criar atalho.");
+      setShortcutMsg(t("msg.noShortcut"));
       return;
     }
     try {
       const warnings = await recreateShortcuts(entries);
       setShortcutMsg(
         warnings.length
-          ? `Atalhos com avisos: ${warnings.join("; ")}`
-          : `Atalhos de menu recriados (${entries.length} apps).`,
+          ? t("msg.shortcutWarn", { w: warnings.join("; ") })
+          : t("msg.shortcutOk", { n: entries.length }),
       );
     } catch (e) {
-      setShortcutMsg(`Erro: ${e}`);
+      setShortcutMsg(t("msg.error", { e: String(e) }));
     }
   };
 
   const doApplyAssociations = async () => {
-    setAssocMsg("Aplicando…");
+    setAssocMsg(t("msg.applying"));
     const entries: AssocEntry[] = [];
     for (const [ext, appId] of Object.entries(routes)) {
       const app = CATALOG.find((a) => a.id === appId);
@@ -522,18 +532,18 @@ export default function App() {
       entries.push({ ext, appId, appName: app.name, exe: info.exe });
     }
     if (!entries.length) {
-      setAssocMsg("Nenhum app instalado pra associar — instale primeiro na aba Apps.");
+      setAssocMsg(t("msg.noAppToAssoc"));
       return;
     }
     try {
       const warnings = await applyAssociations(entries);
       setAssocMsg(
         warnings.length
-          ? `Aplicado com avisos: ${warnings.join("; ")}`
-          : `Associações aplicadas (${entries.length} extensões).`,
+          ? t("msg.assocWarn", { w: warnings.join("; ") })
+          : t("msg.assocOk", { n: entries.length }),
       );
     } catch (e) {
-      setAssocMsg(`Erro: ${e}`);
+      setAssocMsg(t("msg.error", { e: String(e) }));
     }
   };
 
@@ -543,12 +553,12 @@ export default function App() {
         <div className="hub-brand">
           <span className="hub-logo">◱</span>
           <h1>
-            TaylorHub <span className="hub-sub">suíte Local — instalar, atualizar, abrir</span>
+            TaylorHub <span className="hub-sub">{t("hdr.sub")}</span>
           </h1>
         </div>
         <nav className="hub-tabs">
           <button className={tab === "apps" ? "active" : ""} onClick={() => setTab("apps")}>
-            Apps
+            {t("tab.apps")}
           </button>
           <button
             className={tab === "recentes" ? "active" : ""}
@@ -557,13 +567,13 @@ export default function App() {
               if (tauri) readRecents().then(setRecents);
             }}
           >
-            Recentes
+            {t("tab.recent")}
           </button>
           <button
             className={tab === "arquivos" ? "active" : ""}
             onClick={() => setTab("arquivos")}
           >
-            Associações
+            {t("tab.files")}
           </button>
         </nav>
         {tauri && (
@@ -574,13 +584,9 @@ export default function App() {
                 setGhMsg("");
                 setGhOpen(true);
               }}
-              title={
-                ghLogged
-                  ? "Logado no GitHub — 5.000 requisições/hora"
-                  : "Login opcional no GitHub (evita o erro 403 de rate limit)"
-              }
+              title={ghLogged ? t("gh.loggedTitle") : t("gh.loginTitle")}
             >
-              {ghLogged ? "GitHub ✓" : "GitHub"}
+              {ghLogged ? t("gh.logged") : t("gh.login")}
             </button>
             <button
               className="refresh-btn"
@@ -589,31 +595,42 @@ export default function App() {
                 void loadReleases(true);
               }}
               disabled={checking}
-              title="Consulta o GitHub agora, ignorando os caches (releases e ícones)"
+              title={t("refresh.title")}
             >
               <span className={checking ? "spin" : ""}>↻</span>
-              {checking ? "Verificando…" : "Verificar atualizações"}
+              {checking ? t("refresh.checking") : t("refresh.check")}
             </button>
             {checkedAt && !checking && (
-              <span className="refresh-when">Verificado {shortClock(checkedAt)}</span>
+              <span className="refresh-when">{t("refresh.when", { clock: shortClock(checkedAt) })}</span>
             )}
           </div>
         )}
+        <select
+          className="lang-select"
+          value={locale}
+          onChange={(e) => setLocale(e.target.value as Locale)}
+          title={t("lang.title")}
+          aria-label={t("lang.title")}
+        >
+          {(Object.keys(LOCALE_LABELS) as Locale[]).map((l) => (
+            <option key={l} value={l}>
+              {LOCALE_LABELS[l]}
+            </option>
+          ))}
+        </select>
       </header>
 
       {!tauri && (
-        <div className="hub-banner">
-          Rodando no navegador (preview) — instalar/detectar só funciona no app Tauri.
-        </div>
+        <div className="hub-banner">{t("banner.browser")}</div>
       )}
       {errors._global && <div className="hub-banner error">{errors._global}</div>}
       {hubUpdate && (
         <div className="hub-banner update">
           <span>
-            Nova versão do Hub disponível: v{hubUpdate.latest} (você está na v{hubUpdate.current}).
+            {t("banner.updatePre", { latest: hubUpdate.latest, current: hubUpdate.current })}
           </span>
           <button className="primary" onClick={doUpdateSelf}>
-            Atualizar o Hub
+            {t("banner.updateBtn")}
           </button>
           {hubUpdateMsg && <span className="assoc-msg">{hubUpdateMsg}</span>}
         </div>
@@ -623,7 +640,7 @@ export default function App() {
         <main className="hub-grid-wrap">
           {os === "linux" && (
             <div className="linux-bar">
-              <button onClick={doRecreateShortcuts}>Recriar atalhos do menu</button>
+              <button onClick={doRecreateShortcuts}>{t("linux.recreate")}</button>
               {shortcutMsg && <span className="assoc-msg">{shortcutMsg}</span>}
             </div>
           )}
@@ -634,17 +651,17 @@ export default function App() {
               onKeyDown={(e) => {
                 if (e.key === "Enter") void doAddRepo();
               }}
-              placeholder="github.com/dono/repo — adicionar app de fora do catálogo"
+              placeholder={t("repo.placeholder")}
               spellCheck={false}
             />
             <button className="primary" onClick={doAddRepo} disabled={!tauri || repoBusy || !repoInput.trim()}>
-              {repoBusy ? "Adicionando…" : "Adicionar repositório"}
+              {repoBusy ? t("repo.adding") : t("repo.add")}
             </button>
             {repoMsg && <span className="assoc-msg">{repoMsg}</span>}
           </div>
           {sections.map(([category, apps]) => (
           <section className="hub-section" key={category}>
-          <h3 className="cat-title">{category}</h3>
+          <h3 className="cat-title">{catLabel(category)}</h3>
           <div className="hub-grid">
           {apps.map((app) => {
             const info = installed[app.id];
@@ -668,18 +685,19 @@ export default function App() {
                       {info?.installed ? (
                         <>
                           v{info.version || "?"}
-                          {isDeb && <span className="badge deb">via .deb</span>}
-                          {hasUpdate && <span className="badge">v{rel!.version} disponível</span>}
+                          {isDeb && <span className="badge deb">{t("card.debBadge")}</span>}
+                          {hasUpdate && <span className="badge">{t("card.updateBadge", { v: rel!.version })}</span>}
                         </>
                       ) : (
                         <span className="muted">
-                          não instalado{rel ? ` — última: v${rel.version}` : ""}
+                          {t("card.notInstalled")}
+                          {rel ? t("card.lastVersion", { v: rel.version }) : ""}
                         </span>
                       )}
                     </div>
                   </div>
                 </div>
-                <p className="desc">{app.description}</p>
+                <p className="desc">{appDesc(app.id, app.description)}</p>
                 {isBusy && (
                   <div className="progress">
                     {prog?.phase === "download" && prog.total > 0 ? (
@@ -695,7 +713,7 @@ export default function App() {
                         </span>
                       </>
                     ) : (
-                      <span>{prog?.phase === "install" ? "Instalando…" : "Preparando…"}</span>
+                      <span>{prog?.phase === "install" ? t("card.installing") : t("card.preparing")}</span>
                     )}
                   </div>
                 )}
@@ -703,17 +721,17 @@ export default function App() {
                 <div className="actions">
                   {!info?.installed && (
                     <button className="primary" disabled={!tauri || isBusy} onClick={() => doInstall(app)}>
-                      Instalar
+                      {t("act.install")}
                     </button>
                   )}
                   {hasUpdate && (
                     <button className="primary" disabled={isBusy} onClick={() => doInstall(app)}>
-                      Atualizar
+                      {t("act.update")}
                     </button>
                   )}
                   {info?.installed && (
                     <button disabled={isBusy || !info.exe} onClick={() => doLaunch(app)}>
-                      Abrir
+                      {t("act.open")}
                     </button>
                   )}
                   {info?.installed && !isDeb && (
@@ -722,24 +740,20 @@ export default function App() {
                       disabled={isBusy}
                       onClick={() => doUninstall(app)}
                     >
-                      Desinstalar
+                      {t("act.uninstall")}
                     </button>
                   )}
                   {isCustom(app.id) && (
                     <button
                       disabled={isBusy}
-                      title="Tirar da lista do Hub (não desinstala)"
+                      title={t("act.removeFromListTitle")}
                       onClick={() => doRemoveCustom(app)}
                     >
-                      Remover da lista
+                      {t("act.removeFromList")}
                     </button>
                   )}
                 </div>
-                {isDeb && (
-                  <div className="deb-hint">
-                    Instalado pelo gerenciador de pacotes — atualize/remova com o apt.
-                  </div>
-                )}
+                {isDeb && <div className="deb-hint">{t("card.debHint")}</div>}
               </div>
             );
           })}
@@ -753,10 +767,7 @@ export default function App() {
         <main className="hub-recents">
           {recentsMsg && <div className="hub-banner error">{recentsMsg}</div>}
           {recents.length === 0 && (
-            <p className="hint">
-              Nada por aqui ainda. Os arquivos que você abrir com duplo-clique (via associações do
-              Hub) aparecem nesta lista — e dá pra fixar os favoritos com a ☆.
-            </p>
+            <p className="hint">{t("rec.empty")}</p>
           )}
           {(["fixados", "recentes"] as const).map((section) => {
             const list = recents
@@ -765,7 +776,7 @@ export default function App() {
             if (!list.length) return null;
             return (
               <section key={section}>
-                <h3>{section === "fixados" ? "★ Fixados" : "Recentes"}</h3>
+                <h3>{section === "fixados" ? t("rec.pinned") : t("rec.recent")}</h3>
                 <ul className="recent-list">
                   {list.map((entry) => {
                     const target = appForFile(entry.path);
@@ -774,7 +785,7 @@ export default function App() {
                         <span
                           className="recent-dot"
                           style={{ background: target?.app.accent ?? "var(--muted)" }}
-                          title={target?.app.name ?? "sem app associado"}
+                          title={target?.app.name ?? t("rec.noApp")}
                         />
                         <button
                           className="recent-name"
@@ -787,14 +798,14 @@ export default function App() {
                         <span className="recent-time">{timeAgo(entry.ts)}</span>
                         <button
                           className="recent-act"
-                          title={entry.pinned ? "Desafixar" : "Fixar"}
+                          title={entry.pinned ? t("rec.unpin") : t("rec.pin")}
                           onClick={() => doTogglePin(entry)}
                         >
                           {entry.pinned ? "★" : "☆"}
                         </button>
                         <button
                           className="recent-act"
-                          title="Remover da lista"
+                          title={t("rec.remove")}
                           onClick={() => doRemoveRecent(entry)}
                         >
                           ✕
@@ -808,7 +819,7 @@ export default function App() {
           })}
           {recents.some((e) => !e.pinned) && (
             <button className="clear-recents" onClick={doClearRecents}>
-              Limpar recentes
+              {t("rec.clear")}
             </button>
           )}
         </main>
@@ -816,16 +827,12 @@ export default function App() {
 
       {tab === "arquivos" && (
         <main className="hub-files">
-          <p className="hint">
-            Escolha qual app abre cada tipo de arquivo. O Hub registra a associação e despacha o
-            arquivo pro app certo ao clicar. Extensões que já têm dono no sistema (ex.: .md, .pdf)
-            podem exigir confirmar no diálogo "Como você quer abrir?" do Windows uma vez.
-          </p>
+          <p className="hint">{t("assoc.hint")}</p>
           <table>
             <thead>
               <tr>
-                <th>Extensão</th>
-                <th>Abrir com</th>
+                <th>{t("assoc.ext")}</th>
+                <th>{t("assoc.openWith")}</th>
               </tr>
             </thead>
             <tbody>
@@ -842,7 +849,7 @@ export default function App() {
                       {apps.map((a) => (
                         <option key={a.id} value={a.id}>
                           {a.name}
-                          {installed[a.id]?.installed ? "" : " (não instalado)"}
+                          {installed[a.id]?.installed ? "" : t("assoc.notInstalledOpt")}
                         </option>
                       ))}
                     </select>
@@ -853,7 +860,7 @@ export default function App() {
           </table>
           <div className="files-actions">
             <button className="primary" disabled={!tauri} onClick={doApplyAssociations}>
-              Aplicar associações
+              {t("assoc.apply")}
             </button>
             {assocMsg && <span className="assoc-msg">{assocMsg}</span>}
           </div>
@@ -863,26 +870,25 @@ export default function App() {
       {ghOpen && (
         <div className="modal-overlay" onClick={() => !ghBusy && setGhOpen(false)}>
           <div className="modal" onClick={(e) => e.stopPropagation()}>
-            <h3>Conectar ao GitHub (opcional)</h3>
+            <h3>{t("ghm.title")}</h3>
             <p>
-              Sem login, o GitHub limita as consultas anônimas a <strong>60/hora por IP</strong> —
-              abrir o Hub várias vezes seguidas dá o erro 403. Conectado, o limite vira{" "}
-              <strong>5.000/hora</strong>. A credencial fica no <strong>cofre do sistema</strong>{" "}
-              (nunca em arquivo) e só é usada pra consultar e baixar releases.
+              {t("ghm.p1")} <strong>{t("ghm.p1Strong")}</strong> {t("ghm.p2")}{" "}
+              <strong>{t("ghm.p2Strong")}</strong>{t("ghm.p3")}{" "}
+              <strong>{t("ghm.p3Strong")}</strong> {t("ghm.p4")}
             </p>
 
             {!ghLogged && !ghFlow && (
               <button className="primary gh-big" onClick={browserLogin} disabled={ghBusy}>
-                {ghBusy ? "Abrindo o navegador…" : "🌐 Entrar com o navegador"}
+                {ghBusy ? t("ghm.opening") : t("ghm.login")}
               </button>
             )}
 
             {ghFlow && (
               <div className="gh-flow">
-                <p>Digite este código na página do GitHub que abriu:</p>
+                <p>{t("ghm.flowCode")}</p>
                 <div className="gh-code">{ghFlow.userCode}</div>
                 <p className="gh-wait">
-                  Aguardando você autorizar no navegador…{" "}
+                  {t("ghm.flowWait")}{" "}
                   <a
                     href={ghFlow.verificationUri}
                     onClick={(e) => {
@@ -890,26 +896,24 @@ export default function App() {
                       openUrl(ghFlow.verificationUri).catch(() => {});
                     }}
                   >
-                    reabrir a página
+                    {t("ghm.flowReopen")}
                   </a>
                 </p>
               </div>
             )}
 
-            {ghLogged && <p className="assoc-msg">✓ Conectado.</p>}
+            {ghLogged && <p className="assoc-msg">{t("ghm.connected")}</p>}
 
             {(ghManual || !ghConfigured) && !ghLogged && (
               <>
                 <p className="gh-manual-hint">
-                  {ghManual
-                    ? "Cole o token gerado:"
-                    : "Ou cole um token criado manualmente (sem nenhum escopo marcado):"}
+                  {ghManual ? t("ghm.pasteGenerated") : t("ghm.pasteManual")}
                 </p>
                 <input
                   type="password"
                   value={ghToken}
                   onChange={(e) => setGhToken(e.target.value)}
-                  placeholder="ghp_… ou github_pat_…"
+                  placeholder={t("ghm.tokenPlaceholder")}
                   spellCheck={false}
                 />
               </>
@@ -918,16 +922,16 @@ export default function App() {
             <div className="modal-actions">
               {!ghLogged && ghToken.trim() && (
                 <button className="primary" onClick={saveGhToken}>
-                  Salvar token
+                  {t("ghm.saveToken")}
                 </button>
               )}
               {ghLogged && (
                 <button className="danger" onClick={clearGhToken}>
-                  Desconectar
+                  {t("ghm.disconnect")}
                 </button>
               )}
               <button disabled={ghBusy} onClick={() => setGhOpen(false)}>
-                Fechar
+                {t("common.close")}
               </button>
             </div>
             {ghMsg && <p className="assoc-msg">{ghMsg}</p>}
@@ -935,10 +939,7 @@ export default function App() {
         </div>
       )}
 
-      <footer className="hub-footer">
-        Taylor — 100% offline depois de instalado; o Hub só acessa o GitHub pra baixar
-        releases. Sem telemetria.
-      </footer>
+      <footer className="hub-footer">{t("foot.text")}</footer>
     </div>
   );
 }
