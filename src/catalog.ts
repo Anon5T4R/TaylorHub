@@ -362,6 +362,20 @@ export const CATALOG: CatalogApp[] = [
     accent: "#ea580c",
     iconUrl: "https://raw.githubusercontent.com/Anon5T4R/LocalFeed/main/src-tauri/icons/128x128.png",
   },
+  {
+    id: "automation",
+    category: "Automação",
+    name: "LocalAutomation",
+    description: "Automação de fluxos (n8n/Zapier local) — nós de HTTP/comando/arquivos/JS, .tflow",
+    kind: "app",
+    repo: "Anon5T4R/LocalAutomation",
+    assets: { win: "*_x64-setup.exe", linux: "*_amd64.AppImage" },
+    silentArgs: ["/S"],
+    exe: "LocalAutomation.exe",
+    extensions: ["tflow"],
+    accent: "#0891b2",
+    iconUrl: "https://raw.githubusercontent.com/Anon5T4R/LocalAutomation/main/src-tauri/icons/128x128.png",
+  },
 ];
 
 /** Todas as extensões do catálogo, com os apps candidatos (ordem do catálogo). */

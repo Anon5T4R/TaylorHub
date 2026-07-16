@@ -151,6 +151,7 @@ const pt = {
   "cat.Mídia": "Mídia",
   "cat.Segurança": "Segurança",
   "cat.Sistema": "Sistema",
+  "cat.Automação": "Automação",
   "cat.Meus repositórios": "Meus repositórios",
   "cat.Outros": "Outros",
   "custom.repoDesc": "Repositório do usuário — {repo}",
@@ -180,6 +181,7 @@ const pt = {
   "desc.terminal": "Terminal — abas, perfis (PowerShell/cmd/Git Bash/WSL), busca, PTY nativo",
   "desc.calc": "Calculadora — padrão, científica, programador (HEX/BIN) e conversor de unidades",
   "desc.feed": "Leitor RSS/Atom — sem algoritmo nem conta; modo leitura offline, OPML",
+  "desc.automation": "Automação de fluxos (n8n/Zapier local) — nós de HTTP/comando/arquivos/JS, .tflow",
 
   // Idioma
   "lang.title": "Idioma",
@@ -305,6 +307,7 @@ const en: Record<MessageKey, string> = {
   "cat.Mídia": "Media",
   "cat.Segurança": "Security",
   "cat.Sistema": "System",
+  "cat.Automação": "Automation",
   "cat.Meus repositórios": "My repositories",
   "cat.Outros": "Other",
   "custom.repoDesc": "User repository — {repo}",
@@ -333,6 +336,7 @@ const en: Record<MessageKey, string> = {
   "desc.terminal": "Terminal — tabs, profiles (PowerShell/cmd/Git Bash/WSL), search, native PTY",
   "desc.calc": "Calculator — standard, scientific, programmer (HEX/BIN) and unit converter",
   "desc.feed": "RSS/Atom reader — no algorithm, no account; offline reader mode, OPML",
+  "desc.automation": "Flow automation (local n8n/Zapier) — HTTP/command/files/JS nodes, .tflow",
 
   "lang.title": "Language",
 };
@@ -455,6 +459,7 @@ const es: Record<MessageKey, string> = {
   "cat.Mídia": "Medios",
   "cat.Segurança": "Seguridad",
   "cat.Sistema": "Sistema",
+  "cat.Automação": "Automatización",
   "cat.Meus repositórios": "Mis repositorios",
   "cat.Outros": "Otros",
   "custom.repoDesc": "Repositorio del usuario — {repo}",
@@ -483,6 +488,7 @@ const es: Record<MessageKey, string> = {
   "desc.terminal": "Terminal — pestañas, perfiles (PowerShell/cmd/Git Bash/WSL), búsqueda, PTY nativo",
   "desc.calc": "Calculadora — estándar, científica, programador (HEX/BIN) y conversor de unidades",
   "desc.feed": "Lector RSS/Atom — sin algoritmo ni cuenta; modo lectura offline, OPML",
+  "desc.automation": "Automatización de flujos (n8n/Zapier local) — nodos HTTP/comando/archivos/JS, .tflow",
 
   "lang.title": "Idioma",
 };

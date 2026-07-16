@@ -99,6 +99,7 @@ const CATEGORY_ORDER = [
   "Mídia",
   "Segurança",
   "Sistema",
+  "Automação",
   CUSTOM_CATEGORY,
 ];
 
