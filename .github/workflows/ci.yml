@@ -45,5 +45,5 @@ jobs:
       - name: Cargo check + tests
         working-directory: src-tauri
         run: |
-          cargo check
-          cargo test --lib
+          cargo check --locked
+          cargo test --locked --lib
