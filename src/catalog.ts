@@ -390,6 +390,20 @@ export const CATALOG: CatalogApp[] = [
     accent: "#059669",
     iconUrl: "https://raw.githubusercontent.com/Anon5T4R/LocalClip/main/src-tauri/icons/128x128.png",
   },
+  {
+    id: "monitor",
+    category: "Sistema",
+    name: "LocalMonitor",
+    description: "Monitor de sistema — CPU/memória/rede/discos ao vivo, processos com encerrar",
+    kind: "app",
+    repo: "Anon5T4R/LocalMonitor",
+    assets: { win: "*_x64-setup.exe", linux: "*_amd64.AppImage" },
+    silentArgs: ["/S"],
+    exe: "LocalMonitor.exe",
+    extensions: [],
+    accent: "#dc2626",
+    iconUrl: "https://raw.githubusercontent.com/Anon5T4R/LocalMonitor/main/src-tauri/icons/128x128.png",
+  },
 ];
 
 /** Todas as extensões do catálogo, com os apps candidatos (ordem do catálogo). */
