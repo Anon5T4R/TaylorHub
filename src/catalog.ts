@@ -348,6 +348,20 @@ export const CATALOG: CatalogApp[] = [
     accent: "#7c3aed",
     iconUrl: "https://raw.githubusercontent.com/Anon5T4R/LocalCalc/main/src-tauri/icons/128x128.png",
   },
+  {
+    id: "feed",
+    category: "Dados e conhecimento",
+    name: "LocalFeed",
+    description: "Leitor RSS/Atom — sem algoritmo nem conta; modo leitura offline, OPML",
+    kind: "app",
+    repo: "Anon5T4R/LocalFeed",
+    assets: { win: "*_x64-setup.exe", linux: "*_amd64.AppImage" },
+    silentArgs: ["/S"],
+    exe: "LocalFeed.exe",
+    extensions: ["opml"],
+    accent: "#ea580c",
+    iconUrl: "https://raw.githubusercontent.com/Anon5T4R/LocalFeed/main/src-tauri/icons/128x128.png",
+  },
 ];
 
 /** Todas as extensões do catálogo, com os apps candidatos (ordem do catálogo). */
