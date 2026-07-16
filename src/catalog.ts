@@ -306,6 +306,20 @@ export const CATALOG: CatalogApp[] = [
     accent: "#d97706",
     iconUrl: "https://raw.githubusercontent.com/Anon5T4R/LocalFiles/main/src-tauri/icons/128x128.png",
   },
+  {
+    id: "zip",
+    category: "Sistema",
+    name: "LocalZip",
+    description: "Compactador — abre/extrai zip, tar e tar.gz sem sair do lugar; cria zip/tar.gz",
+    kind: "app",
+    repo: "Anon5T4R/LocalZip",
+    assets: { win: "*_x64-setup.exe", linux: "*_amd64.AppImage" },
+    silentArgs: ["/S"],
+    exe: "LocalZip.exe",
+    extensions: ["zip", "tar", "gz", "tgz"],
+    accent: "#b45309",
+    iconUrl: "https://raw.githubusercontent.com/Anon5T4R/LocalZip/main/src-tauri/icons/128x128.png",
+  },
 ];
 
 /** Todas as extensões do catálogo, com os apps candidatos (ordem do catálogo). */

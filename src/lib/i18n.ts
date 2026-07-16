@@ -176,6 +176,7 @@ const pt = {
   "desc.openobsidian": "Notas e base de conhecimento (Obsidian) — grafo, mermaid, IA",
   "desc.keys": "Gerenciador de senhas (Bitwarden) — vault .tkeys cifrado, gerador, sem nuvem",
   "desc.files": "Gerenciador de arquivos — abas, 3 visões, copiar/mover com progresso, lixeira",
+  "desc.zip": "Compactador — abre/extrai zip, tar e tar.gz sem sair do lugar; cria zip/tar.gz",
 
   // Idioma
   "lang.title": "Idioma",
@@ -325,6 +326,7 @@ const en: Record<MessageKey, string> = {
   "desc.openobsidian": "Notes and knowledge base (Obsidian) — graph, mermaid, AI",
   "desc.keys": "Password manager (Bitwarden) — encrypted .tkeys vault, generator, no cloud",
   "desc.files": "File manager — tabs, 3 views, copy/move with progress, trash",
+  "desc.zip": "Archiver — open/extract zip, tar and tar.gz in place; create zip/tar.gz",
 
   "lang.title": "Language",
 };
@@ -471,6 +473,7 @@ const es: Record<MessageKey, string> = {
   "desc.openobsidian": "Notas y base de conocimiento (Obsidian) — grafo, mermaid, IA",
   "desc.keys": "Gestor de contraseñas (Bitwarden) — vault .tkeys cifrado, generador, sin nube",
   "desc.files": "Gestor de archivos — pestañas, 3 vistas, copiar/mover con progreso, papelera",
+  "desc.zip": "Compresor — abre/extrae zip, tar y tar.gz sin moverse; crea zip/tar.gz",
 
   "lang.title": "Idioma",
 };
