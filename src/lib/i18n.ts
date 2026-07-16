@@ -182,6 +182,7 @@ const pt = {
   "desc.calc": "Calculadora — padrão, científica, programador (HEX/BIN) e conversor de unidades",
   "desc.feed": "Leitor RSS/Atom — sem algoritmo nem conta; modo leitura offline, OPML",
   "desc.automation": "Automação de fluxos (n8n/Zapier local) — nós de HTTP/comando/arquivos/JS, .tflow",
+  "desc.clip": "Histórico de área de transferência — busca, fixados, popup por atalho global",
 
   // Idioma
   "lang.title": "Idioma",
@@ -337,6 +338,7 @@ const en: Record<MessageKey, string> = {
   "desc.calc": "Calculator — standard, scientific, programmer (HEX/BIN) and unit converter",
   "desc.feed": "RSS/Atom reader — no algorithm, no account; offline reader mode, OPML",
   "desc.automation": "Flow automation (local n8n/Zapier) — HTTP/command/files/JS nodes, .tflow",
+  "desc.clip": "Clipboard history — search, pinned items, global-shortcut popup",
 
   "lang.title": "Language",
 };
@@ -489,6 +491,7 @@ const es: Record<MessageKey, string> = {
   "desc.calc": "Calculadora — estándar, científica, programador (HEX/BIN) y conversor de unidades",
   "desc.feed": "Lector RSS/Atom — sin algoritmo ni cuenta; modo lectura offline, OPML",
   "desc.automation": "Automatización de flujos (n8n/Zapier local) — nodos HTTP/comando/archivos/JS, .tflow",
+  "desc.clip": "Historial de portapapeles — búsqueda, fijados, popup con atajo global",
 
   "lang.title": "Idioma",
 };

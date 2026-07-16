@@ -376,6 +376,20 @@ export const CATALOG: CatalogApp[] = [
     accent: "#0891b2",
     iconUrl: "https://raw.githubusercontent.com/Anon5T4R/LocalAutomation/main/src-tauri/icons/128x128.png",
   },
+  {
+    id: "clip",
+    category: "Sistema",
+    name: "LocalClip",
+    description: "Histórico de área de transferência — busca, fixados, popup por atalho global",
+    kind: "app",
+    repo: "Anon5T4R/LocalClip",
+    assets: { win: "*_x64-setup.exe", linux: "*_amd64.AppImage" },
+    silentArgs: ["/S"],
+    exe: "LocalClip.exe",
+    extensions: [],
+    accent: "#059669",
+    iconUrl: "https://raw.githubusercontent.com/Anon5T4R/LocalClip/main/src-tauri/icons/128x128.png",
+  },
 ];
 
 /** Todas as extensões do catálogo, com os apps candidatos (ordem do catálogo). */
