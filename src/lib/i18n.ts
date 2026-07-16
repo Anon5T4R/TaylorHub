@@ -177,6 +177,8 @@ const pt = {
   "desc.keys": "Gerenciador de senhas (Bitwarden) — vault .tkeys cifrado, gerador, sem nuvem",
   "desc.files": "Gerenciador de arquivos — abas, 3 visões, copiar/mover com progresso, lixeira",
   "desc.zip": "Compactador — abre/extrai zip, tar e tar.gz sem sair do lugar; cria zip/tar.gz",
+  "desc.terminal": "Terminal — abas, perfis (PowerShell/cmd/Git Bash/WSL), busca, PTY nativo",
+  "desc.calc": "Calculadora — padrão, científica, programador (HEX/BIN) e conversor de unidades",
 
   // Idioma
   "lang.title": "Idioma",
@@ -327,6 +329,8 @@ const en: Record<MessageKey, string> = {
   "desc.keys": "Password manager (Bitwarden) — encrypted .tkeys vault, generator, no cloud",
   "desc.files": "File manager — tabs, 3 views, copy/move with progress, trash",
   "desc.zip": "Archiver — open/extract zip, tar and tar.gz in place; create zip/tar.gz",
+  "desc.terminal": "Terminal — tabs, profiles (PowerShell/cmd/Git Bash/WSL), search, native PTY",
+  "desc.calc": "Calculator — standard, scientific, programmer (HEX/BIN) and unit converter",
 
   "lang.title": "Language",
 };
@@ -474,6 +478,8 @@ const es: Record<MessageKey, string> = {
   "desc.keys": "Gestor de contraseñas (Bitwarden) — vault .tkeys cifrado, generador, sin nube",
   "desc.files": "Gestor de archivos — pestañas, 3 vistas, copiar/mover con progreso, papelera",
   "desc.zip": "Compresor — abre/extrae zip, tar y tar.gz sin moverse; crea zip/tar.gz",
+  "desc.terminal": "Terminal — pestañas, perfiles (PowerShell/cmd/Git Bash/WSL), búsqueda, PTY nativo",
+  "desc.calc": "Calculadora — estándar, científica, programador (HEX/BIN) y conversor de unidades",
 
   "lang.title": "Idioma",
 };
