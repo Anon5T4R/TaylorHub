@@ -292,6 +292,20 @@ export const CATALOG: CatalogApp[] = [
     accent: "#4338ca",
     iconUrl: "https://raw.githubusercontent.com/Anon5T4R/LocalKeys/main/src-tauri/icons/128x128.png",
   },
+  {
+    id: "files",
+    category: "Sistema",
+    name: "LocalFiles",
+    description: "Gerenciador de arquivos — abas, 3 visões, copiar/mover com progresso, lixeira",
+    kind: "app",
+    repo: "Anon5T4R/LocalFiles",
+    assets: { win: "*_x64-setup.exe", linux: "*_amd64.AppImage" },
+    silentArgs: ["/S"],
+    exe: "LocalFiles.exe",
+    extensions: [],
+    accent: "#d97706",
+    iconUrl: "https://raw.githubusercontent.com/Anon5T4R/LocalFiles/main/src-tauri/icons/128x128.png",
+  },
 ];
 
 /** Todas as extensões do catálogo, com os apps candidatos (ordem do catálogo). */

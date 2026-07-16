@@ -150,6 +150,7 @@ const pt = {
   "cat.Inteligência artificial": "Inteligência artificial",
   "cat.Mídia": "Mídia",
   "cat.Segurança": "Segurança",
+  "cat.Sistema": "Sistema",
   "cat.Meus repositórios": "Meus repositórios",
   "cat.Outros": "Outros",
   "custom.repoDesc": "Repositório do usuário — {repo}",
@@ -174,6 +175,7 @@ const pt = {
   "desc.localai": "Roda modelos GGUF locais (LM Studio) — CPU e iGPU no talo",
   "desc.openobsidian": "Notas e base de conhecimento (Obsidian) — grafo, mermaid, IA",
   "desc.keys": "Gerenciador de senhas (Bitwarden) — vault .tkeys cifrado, gerador, sem nuvem",
+  "desc.files": "Gerenciador de arquivos — abas, 3 visões, copiar/mover com progresso, lixeira",
 
   // Idioma
   "lang.title": "Idioma",
@@ -298,6 +300,7 @@ const en: Record<MessageKey, string> = {
   "cat.Inteligência artificial": "Artificial intelligence",
   "cat.Mídia": "Media",
   "cat.Segurança": "Security",
+  "cat.Sistema": "System",
   "cat.Meus repositórios": "My repositories",
   "cat.Outros": "Other",
   "custom.repoDesc": "User repository — {repo}",
@@ -321,6 +324,7 @@ const en: Record<MessageKey, string> = {
   "desc.localai": "Runs local GGUF models (LM Studio) — CPU and iGPU maxed out",
   "desc.openobsidian": "Notes and knowledge base (Obsidian) — graph, mermaid, AI",
   "desc.keys": "Password manager (Bitwarden) — encrypted .tkeys vault, generator, no cloud",
+  "desc.files": "File manager — tabs, 3 views, copy/move with progress, trash",
 
   "lang.title": "Language",
 };
@@ -442,6 +446,7 @@ const es: Record<MessageKey, string> = {
   "cat.Inteligência artificial": "Inteligencia artificial",
   "cat.Mídia": "Medios",
   "cat.Segurança": "Seguridad",
+  "cat.Sistema": "Sistema",
   "cat.Meus repositórios": "Mis repositorios",
   "cat.Outros": "Otros",
   "custom.repoDesc": "Repositorio del usuario — {repo}",
@@ -465,6 +470,7 @@ const es: Record<MessageKey, string> = {
   "desc.localai": "Ejecuta modelos GGUF locales (LM Studio) — CPU e iGPU al máximo",
   "desc.openobsidian": "Notas y base de conocimiento (Obsidian) — grafo, mermaid, IA",
   "desc.keys": "Gestor de contraseñas (Bitwarden) — vault .tkeys cifrado, generador, sin nube",
+  "desc.files": "Gestor de archivos — pestañas, 3 vistas, copiar/mover con progreso, papelera",
 
   "lang.title": "Idioma",
 };
