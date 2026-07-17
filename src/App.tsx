@@ -48,6 +48,7 @@ import {
   useLocale,
   type Locale,
 } from "./lib/i18n";
+import { setTheme, THEMES, useTheme, type Theme } from "./lib/theme";
 import "./App.css";
 
 type Tab = "apps" | "recentes" | "arquivos";
@@ -157,6 +158,7 @@ function AppAvatar({ app, src }: { app: CatalogApp; src?: string }) {
 export default function App() {
   const tauri = inTauri();
   const locale = useLocale();
+  const theme = useTheme();
   const [tab, setTab] = useState<Tab>("apps");
   const [os, setOs] = useState<string>("windows");
   const [installed, setInstalled] = useState<Record<string, InstalledInfo>>({});
@@ -607,6 +609,19 @@ export default function App() {
             )}
           </div>
         )}
+        <select
+          className="lang-select"
+          value={theme}
+          onChange={(e) => setTheme(e.target.value as Theme)}
+          title={t("theme.title")}
+          aria-label={t("theme.title")}
+        >
+          {THEMES.map((th) => (
+            <option key={th} value={th}>
+              {t(`theme.${th}`)}
+            </option>
+          ))}
+        </select>
         <select
           className="lang-select"
           value={locale}
