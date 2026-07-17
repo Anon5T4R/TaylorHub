@@ -419,6 +419,22 @@ export const CATALOG: CatalogApp[] = [
     accent: "#8b5cf6",
     iconUrl: "https://raw.githubusercontent.com/Anon5T4R/LocalRecord/main/src-tauri/icons/128x128.png",
   },
+  {
+    id: "video",
+    category: "Mídia",
+    name: "LocalVideo",
+    description: "Editor de vídeo — importe, corte, reordene e exporte sem recodificar",
+    kind: "app",
+    repo: "Anon5T4R/LocalVideo",
+    assets: { win: "*_x64-setup.exe", linux: "*_amd64.AppImage" },
+    silentArgs: ["/S"],
+    exe: "LocalVideo.exe",
+    // .tvproj e projeto NOSSO, nao formato do mundo -- associacao so faz sentido
+    // depois que o app estiver maduro. Fica de fora da v0.1.
+    extensions: [],
+    accent: "#0ea5e9",
+    iconUrl: "https://raw.githubusercontent.com/Anon5T4R/LocalVideo/main/src-tauri/icons/128x128.png",
+  },
 ];
 
 /** Todas as extensões do catálogo, com os apps candidatos (ordem do catálogo). */
