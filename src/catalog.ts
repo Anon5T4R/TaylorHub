@@ -404,6 +404,21 @@ export const CATALOG: CatalogApp[] = [
     accent: "#dc2626",
     iconUrl: "https://raw.githubusercontent.com/Anon5T4R/LocalMonitor/main/src-tauri/icons/128x128.png",
   },
+  {
+    id: "record",
+    category: "Mídia",
+    name: "LocalRecord",
+    description: "Estúdio de captura de tela — tela + câmera + áudio, com anotação ao vivo",
+    kind: "app",
+    repo: "Anon5T4R/LocalRecord",
+    assets: { win: "*_x64-setup.exe", linux: "*_amd64.AppImage" },
+    silentArgs: ["/S"],
+    exe: "LocalRecord.exe",
+    // .trec (cenas) so existe a partir da v0.3 -- nao anunciar extensao que o app ainda nao abre.
+    extensions: [],
+    accent: "#8b5cf6",
+    iconUrl: "https://raw.githubusercontent.com/Anon5T4R/LocalRecord/main/src-tauri/icons/128x128.png",
+  },
 ];
 
 /** Todas as extensões do catálogo, com os apps candidatos (ordem do catálogo). */
