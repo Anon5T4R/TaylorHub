@@ -435,6 +435,22 @@ export const CATALOG: CatalogApp[] = [
     accent: "#0ea5e9",
     iconUrl: "https://raw.githubusercontent.com/Anon5T4R/LocalVideo/main/src-tauri/icons/128x128.png",
   },
+  {
+    id: "paint",
+    category: "Mídia",
+    name: "LocalPaint",
+    description: "Editor de imagem raster — camadas, pincel com pressão, filtros e seleção",
+    kind: "app",
+    repo: "Anon5T4R/LocalPaint",
+    assets: { win: "*_x64-setup.exe", linux: "*_amd64.AppImage" },
+    silentArgs: ["/S"],
+    exe: "LocalPaint.exe",
+    // .tpaint e formato NOSSO; o instalador ja registra a associacao — o Hub
+    // nao precisa rotear (mesma decisao do LocalVideo com o .tvproj).
+    extensions: [],
+    accent: "#d97706",
+    iconUrl: "https://raw.githubusercontent.com/Anon5T4R/LocalPaint/main/src-tauri/icons/128x128.png",
+  },
 ];
 
 /** Todas as extensões do catálogo, com os apps candidatos (ordem do catálogo). */
