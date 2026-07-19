@@ -177,6 +177,11 @@ export default function App() {
   const [checkedAt, setCheckedAt] = useState<number | null>(null);
   const [icons, setIcons] = useState<Record<string, string>>({});
 
+  // Fila do "Atualizar tudo": progresso enquanto roda + resumo ao terminar.
+  const [queueState, setQueueState] = useState<{ total: number; done: number; current: string } | null>(null);
+  const [queueSummary, setQueueSummary] = useState<{ ok: number; failed: string[] } | null>(null);
+  const queueRunning = queueState !== null;
+
   // repositórios do usuário + login opcional no GitHub + ordem dos cards
   const [customApps, setCustomApps] = useState<CustomApp[]>([]);
   const [repoInput, setRepoInput] = useState("");
@@ -196,6 +201,24 @@ export default function App() {
   const sections = useMemo(
     () => groupByCategory([...CATALOG, ...customApps.map(customAsCatalog)]),
     [customApps],
+  );
+
+  // Fila do "Atualizar tudo": mesma regra do hasUpdate dos cards. Exclui .deb
+  // (sem update pelo Hub) e o PRÓPRIO Hub (updateSelf tem fluxo/confirm próprios).
+  const updatable = useMemo(
+    () =>
+      [...CATALOG, ...customApps.map(customAsCatalog)].filter((app) => {
+        const info = installed[app.id];
+        const rel = latest[app.id];
+        return (
+          !!info?.installed &&
+          info.source !== "deb" &&
+          !!rel &&
+          !!info.version &&
+          compareVersions(rel.version, info.version) > 0
+        );
+      }),
+    [customApps, installed, latest],
   );
 
   const refreshInstalled = async (customs: CustomApp[] = customApps) => {
@@ -309,7 +332,8 @@ export default function App() {
 
   const isCustom = (id: string) => id.startsWith("custom-");
 
-  const doInstall = async (app: CatalogApp) => {
+  /** Instala/atualiza um app; devolve sucesso (o erro fica no card, não lança). */
+  const doInstall = async (app: CatalogApp): Promise<boolean> => {
     setBusy((b) => ({ ...b, [app.id]: true }));
     setErrors((e) => ({ ...e, [app.id]: "" }));
     try {
@@ -328,8 +352,10 @@ export default function App() {
         const info = await installApp(app, os, currentPath);
         setInstalled((prev) => ({ ...prev, [app.id]: info }));
       }
+      return true;
     } catch (e) {
       setErrors((prev) => ({ ...prev, [app.id]: String(e) }));
+      return false;
     } finally {
       setBusy((b) => ({ ...b, [app.id]: false }));
       setProgress((p) => {
@@ -338,6 +364,26 @@ export default function App() {
         return next;
       });
     }
+  };
+
+  /** Atualiza todos os apps com update pendente, EM SÉRIE (dois instaladores
+   *  simultâneos brigam por UAC/registro). Erro num app não derruba a fila:
+   *  o doInstall já guarda o erro no card e devolve false; aqui só contamos. */
+  const doUpdateAll = async () => {
+    const fila = updatable;
+    if (!fila.length || queueRunning) return;
+    if (!window.confirm(t("confirm.updateAll", { n: fila.length }))) return;
+    setQueueSummary(null);
+    const failed: string[] = [];
+    for (let i = 0; i < fila.length; i++) {
+      const app = fila[i];
+      setQueueState({ total: fila.length, done: i + 1, current: app.name });
+      const ok = await doInstall(app);
+      if (!ok) failed.push(app.name);
+    }
+    setQueueState(null);
+    setQueueSummary({ ok: fila.length - failed.length, failed });
+    void refreshInstalled();
   };
 
   const doAddRepo = async () => {
@@ -655,6 +701,35 @@ export default function App() {
 
       {tab === "apps" && (
         <main className="hub-grid-wrap">
+          {(updatable.length > 0 || queueRunning || queueSummary) && (
+            <div className="hub-banner update">
+              {updatable.length > 0 && (
+                <button className="primary" disabled={queueRunning} onClick={doUpdateAll}>
+                  {t("queue.updateAll", { n: updatable.length })}
+                </button>
+              )}
+              {queueState && (
+                <span>
+                  {t("queue.running", {
+                    done: queueState.done,
+                    total: queueState.total,
+                    name: queueState.current,
+                  })}
+                </span>
+              )}
+              {queueSummary && !queueRunning && (
+                <span className="assoc-msg">
+                  {queueSummary.failed.length
+                    ? t("queue.doneWithFail", {
+                        ok: queueSummary.ok,
+                        fail: queueSummary.failed.length,
+                        names: queueSummary.failed.join(", "),
+                      })
+                    : t("queue.doneOk", { n: queueSummary.ok })}
+                </span>
+              )}
+            </div>
+          )}
           {os === "linux" && (
             <div className="linux-bar">
               <button onClick={doRecreateShortcuts}>{t("linux.recreate")}</button>
@@ -737,12 +812,12 @@ export default function App() {
                 {errors[app.id] && <div className="err">{errors[app.id]}</div>}
                 <div className="actions">
                   {!info?.installed && (
-                    <button className="primary" disabled={!tauri || isBusy} onClick={() => doInstall(app)}>
+                    <button className="primary" disabled={!tauri || isBusy || queueRunning} onClick={() => doInstall(app)}>
                       {t("act.install")}
                     </button>
                   )}
                   {hasUpdate && (
-                    <button className="primary" disabled={isBusy} onClick={() => doInstall(app)}>
+                    <button className="primary" disabled={isBusy || queueRunning} onClick={() => doInstall(app)}>
                       {t("act.update")}
                     </button>
                   )}
@@ -754,7 +829,7 @@ export default function App() {
                   {info?.installed && !isDeb && (
                     <button
                       className="danger"
-                      disabled={isBusy}
+                      disabled={isBusy || queueRunning}
                       onClick={() => doUninstall(app)}
                     >
                       {t("act.uninstall")}

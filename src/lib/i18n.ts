@@ -68,6 +68,14 @@ const pt = {
   "act.removeFromListTitle": "Tirar da lista do Hub (não desinstala)",
   "card.debHint": "Instalado pelo gerenciador de pacotes — atualize/remova com o apt.",
 
+  // Atualizar tudo (fila em série)
+  "queue.updateAll": "Atualizar tudo ({n})",
+  "confirm.updateAll":
+    "Atualizar {n} apps de uma vez?\n\nApps abertos podem falhar ao atualizar — feche-os antes de continuar.",
+  "queue.running": "Atualizando {done}/{total}: {name}…",
+  "queue.doneOk": "Tudo atualizado — {n} apps.",
+  "queue.doneWithFail": "{ok} atualizados, {fail} falharam: {names} (veja o erro no card).",
+
   // Recentes
   "rec.empty":
     "Nada por aqui ainda. Os arquivos que você abrir com duplo-clique (via associações do Hub) aparecem nesta lista — e dá pra fixar os favoritos com a ☆.",
@@ -243,6 +251,13 @@ const en: Record<MessageKey, string> = {
   "act.removeFromListTitle": "Remove from the Hub list (doesn't uninstall)",
   "card.debHint": "Installed by the package manager — update/remove it with apt.",
 
+  "queue.updateAll": "Update all ({n})",
+  "confirm.updateAll":
+    "Update {n} apps at once?\n\nApps that are open may fail to update — close them before continuing.",
+  "queue.running": "Updating {done}/{total}: {name}…",
+  "queue.doneOk": "All up to date — {n} apps.",
+  "queue.doneWithFail": "{ok} updated, {fail} failed: {names} (see the error on the card).",
+
   "rec.empty":
     "Nothing here yet. Files you open by double-clicking (via the Hub's associations) show up in this list — and you can pin favorites with the ☆.",
   "rec.pinned": "★ Pinned",
@@ -406,6 +421,13 @@ const es: Record<MessageKey, string> = {
   "act.removeFromList": "Quitar de la lista",
   "act.removeFromListTitle": "Quitar de la lista del Hub (no desinstala)",
   "card.debHint": "Instalado por el gestor de paquetes — actualiza/quita con apt.",
+
+  "queue.updateAll": "Actualizar todo ({n})",
+  "confirm.updateAll":
+    "¿Actualizar {n} apps de una vez?\n\nLas apps abiertas pueden fallar al actualizar — ciérralas antes de continuar.",
+  "queue.running": "Actualizando {done}/{total}: {name}…",
+  "queue.doneOk": "Todo actualizado — {n} apps.",
+  "queue.doneWithFail": "{ok} actualizadas, {fail} fallaron: {names} (mira el error en la tarjeta).",
 
   "rec.empty":
     "Nada por aquí todavía. Los archivos que abras con doble clic (vía las asociaciones del Hub) aparecen en esta lista — y puedes fijar los favoritos con la ☆.",
