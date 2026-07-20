@@ -466,12 +466,45 @@ export function extensionRoutes(): Map<string, CatalogApp[]> {
   return map;
 }
 
+/**
+ * Quebra uma versão em números + sufixo de pré-lançamento.
+ *
+ * O `parseInt(n, 10) || 0` que estava aqui engolia CALADO duas coisas, e as
+ * duas só aparecem em repositório adicionado pelo usuário (os apps do catálogo
+ * embutido sempre publicam `vX.Y.Z`, então nada disso mordia):
+ *
+ * - **Prefixo não-numérico.** Tag `release-1.2.0` virava `[0, 2, 0]`, ou seja
+ *   lia como 0.2.0 — a versão publicada parecia MAIS VELHA que a instalada e o
+ *   update nunca era oferecido. Prefixo é rótulo, não versão: sai fora.
+ * - **Sufixo de pré-lançamento.** `1.0.0-rc1` virava exatamente `[1, 0, 0]` e
+ *   comparava IGUAL a `1.0.0`, então quem estava num rc nunca recebia a
+ *   estável. Regra do semver: `1.0.0-rc1` vem ANTES de `1.0.0`.
+ *
+ * Metadado de build (`+algo`) é descartado sem virar pré-lançamento — pelo
+ * semver ele não conta pra precedência, e tratá-lo como sufixo faria o app
+ * oferecer "update" pra mesma versão, pra sempre.
+ */
+function parseVersion(v: string): { nums: number[]; pre: string } {
+  const semRotulo = v.trim().replace(/^[^0-9]*/, "");
+  const semBuild = semRotulo.split("+")[0];
+  const [corpo, ...resto] = semBuild.split("-");
+  const nums = corpo.split(".").map((n) => {
+    const m = /^\d+/.exec(n);
+    return m ? parseInt(m[0], 10) : 0;
+  });
+  return { nums, pre: resto.join("-") };
+}
+
 export function compareVersions(a: string, b: string): number {
-  const pa = a.split(".").map((n) => parseInt(n, 10) || 0);
-  const pb = b.split(".").map((n) => parseInt(n, 10) || 0);
-  for (let i = 0; i < Math.max(pa.length, pb.length); i++) {
-    const d = (pa[i] ?? 0) - (pb[i] ?? 0);
+  const pa = parseVersion(a);
+  const pb = parseVersion(b);
+  for (let i = 0; i < Math.max(pa.nums.length, pb.nums.length); i++) {
+    const d = (pa.nums[i] ?? 0) - (pb.nums[i] ?? 0);
     if (d !== 0) return d;
   }
-  return 0;
+  if (pa.pre === pb.pre) return 0;
+  // Ausência de sufixo GANHA: a estável é mais nova que qualquer rc dela.
+  if (!pa.pre) return 1;
+  if (!pb.pre) return -1;
+  return pa.pre < pb.pre ? -1 : 1;
 }

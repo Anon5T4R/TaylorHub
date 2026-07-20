@@ -42,6 +42,9 @@ jobs:
       - name: Frontend build (tsc + vite)
         run: npm run build
 
+      - name: Frontend testes (vitest)
+        run: npm test
+
       - name: Cargo check + tests
         working-directory: src-tauri
         run: |
