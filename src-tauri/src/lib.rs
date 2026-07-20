@@ -635,7 +635,9 @@ async fn fetch_latest_remote(repo: &str) -> Result<ReleaseInfo, String> {
                 .collect()
         })
         .unwrap_or_default();
-    let version = tag.trim_start_matches('v').to_string();
+    // `strip_prefix` e nao `trim_start_matches`: o segundo remove TODOS os `v`
+    // iniciais, entao uma tag `vv1.0` viraria `1.0` em vez de `v1.0`.
+    let version = tag.strip_prefix('v').unwrap_or(&tag).to_string();
     Ok(ReleaseInfo { tag, version, assets })
 }
 
