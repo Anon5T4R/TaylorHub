@@ -95,6 +95,71 @@ fn version_from_filename(name: &str) -> Option<String> {
     validate(&mut cur)
 }
 
+/// Apara o valor CRU de `InstallLocation`.
+///
+/// O NSIS do Tauri grava o caminho **entre aspas** — medido no registro desta
+/// máquina em 2026-07-20, nos 28 apps da suíte. Sem aparar, o `join` monta
+/// `"C:\...\LocalZip"\LocalZip.exe`, que nunca existe: a detecção então caía
+/// **sempre** no fallback do `DisplayIcon` e funcionava por acidente, pelo
+/// caminho errado.
+fn clean_install_location(raw: &str) -> String {
+    raw.trim().trim_matches('"').trim().to_string()
+}
+
+/// Apara o valor CRU de `DisplayIcon`.
+///
+/// Duas formas convivem no registro desta máquina:
+/// - NSIS do Tauri (a suíte): `"C:\...\localzip.exe"` — entre aspas e **sem**
+///   o sufixo `,0`;
+/// - electron-builder (LocalMind): `C:\...\LocalMind.exe,0` — sem aspas e com
+///   o índice do ícone.
+///
+/// Por isso o corte na vírgula só vale quando o caminho **não** está entre
+/// aspas: dentro das aspas a vírgula é parte do caminho (pasta com vírgula no
+/// nome é legal no Windows), e quem termina o caminho é o fecha-aspas.
+fn clean_display_icon(raw: &str) -> String {
+    let s = raw.trim();
+    match s.strip_prefix('"') {
+        Some(rest) => rest.split('"').next().unwrap_or("").to_string(),
+        None => s.split(',').next().unwrap_or("").trim().to_string(),
+    }
+}
+
+/// Resolve `(exe, location)` a partir dos valores **crus** do registro.
+///
+/// Pura de propósito: os casos difíceis (aspas, `,0`, `InstallLocation`
+/// obsoleto depois de reinstalar) são exercitáveis sem mexer no registro da
+/// máquina. Mesmo desenho do `siblings.rs` do LocalFiles.
+///
+/// Ordem: `InstallLocation` + nome do exe (o caso normal) → `DisplayIcon` (pra
+/// instalador que não grava `InstallLocation`, como o electron-builder).
+fn exe_and_location_from_registry_values<F>(
+    install_location: &str,
+    display_icon: &str,
+    exe_name: &str,
+    exists: F,
+) -> (String, String)
+where
+    F: Fn(&Path) -> bool,
+{
+    let mut location = clean_install_location(install_location);
+    if !location.is_empty() {
+        let cand = Path::new(&location).join(exe_name);
+        if exists(&cand) {
+            return (cand.to_string_lossy().to_string(), location);
+        }
+    }
+    let icon = clean_display_icon(display_icon);
+    if !icon.is_empty() && exists(Path::new(&icon)) {
+        if location.is_empty() {
+            location =
+                Path::new(&icon).parent().map(|p| p.to_string_lossy().to_string()).unwrap_or_default();
+        }
+        return (icon, location);
+    }
+    (String::new(), location)
+}
+
 /// Registro de instalações feitas pelo Hub no Linux (AppImages não têm registro).
 #[cfg(not(windows))]
 #[derive(Serialize, Deserialize, Default)]
@@ -133,26 +198,14 @@ fn detect_one(spec: &DetectSpec) -> InstalledInfo {
                 continue;
             }
             let version: String = sub.get_value("DisplayVersion").unwrap_or_default();
-            let mut location: String = sub.get_value("InstallLocation").unwrap_or_default();
-            let mut exe_path = if location.is_empty() {
-                String::new()
-            } else {
-                Path::new(&location).join(&spec.exe).to_string_lossy().to_string()
-            };
-            if exe_path.is_empty() || !Path::new(&exe_path).exists() {
-                // Fallback: DisplayIcon costuma apontar pro exe ("C:\...\App.exe,0").
-                let icon: String = sub.get_value("DisplayIcon").unwrap_or_default();
-                let icon = icon.split(',').next().unwrap_or("").trim_matches('"').to_string();
-                if !icon.is_empty() && Path::new(&icon).exists() {
-                    if location.is_empty() {
-                        location = Path::new(&icon)
-                            .parent()
-                            .map(|p| p.to_string_lossy().to_string())
-                            .unwrap_or_default();
-                    }
-                    exe_path = icon;
-                }
-            }
+            let raw_location: String = sub.get_value("InstallLocation").unwrap_or_default();
+            let raw_icon: String = sub.get_value("DisplayIcon").unwrap_or_default();
+            let (exe_path, location) = exe_and_location_from_registry_values(
+                &raw_location,
+                &raw_icon,
+                &spec.exe,
+                |p| p.exists(),
+            );
             return InstalledInfo {
                 id: spec.id.clone(),
                 installed: true,
@@ -1061,10 +1114,10 @@ fn read_uninstall_entry(tagged: &str) -> Option<(String, String, String, String)
         return None;
     }
     let version: String = sub.get_value("DisplayVersion").unwrap_or_default();
-    let mut location: String = sub.get_value("InstallLocation").unwrap_or_default();
-    location = location.trim_matches('"').to_string();
-    let icon: String = sub.get_value("DisplayIcon").unwrap_or_default();
-    let icon = icon.split(',').next().unwrap_or("").trim_matches('"').to_string();
+    let raw_location: String = sub.get_value("InstallLocation").unwrap_or_default();
+    let mut location = clean_install_location(&raw_location);
+    let raw_icon: String = sub.get_value("DisplayIcon").unwrap_or_default();
+    let icon = clean_display_icon(&raw_icon);
     let mut exe = String::new();
     if !icon.is_empty() && icon.to_lowercase().ends_with(".exe") && Path::new(&icon).exists() {
         exe = icon.clone();
@@ -1791,10 +1844,143 @@ pub fn run() {
 #[cfg(test)]
 mod tests {
     use super::{
-        cache_is_fresh, fetch_latest, glob_match, guess_assets, parse_repo,
+        cache_is_fresh, clean_display_icon, clean_install_location,
+        exe_and_location_from_registry_values, fetch_latest, glob_match, guess_assets, parse_repo,
         version_from_filename, AssetInfo, CachedRelease, ReleaseCache, ReleaseInfo,
         RELEASE_CACHE_TTL_SECS,
     };
+    use std::path::{Path, PathBuf};
+
+    /// `exists` de mentira: só os caminhos listados "existem".
+    fn only(paths: &[&str]) -> impl Fn(&Path) -> bool {
+        let owned: Vec<PathBuf> = paths.iter().map(PathBuf::from).collect();
+        move |p: &Path| owned.iter().any(|x| x == p)
+    }
+
+    /// Caminho montado com o separador DA PLATAFORMA.
+    ///
+    /// Literal `r"C:\..."` em teste passa no Windows e quebra no job Ubuntu do
+    /// CI: no Linux isso é UM componente só, então `join`/`parent` não fazem o
+    /// esperado. A lógica testada aqui (tirar aspas, cortar no `,`, juntar,
+    /// subir um nível) é neutra de plataforma e merece rodar nas duas.
+    fn p(parts: &[&str]) -> String {
+        let mut b = PathBuf::new();
+        for x in parts {
+            b.push(x);
+        }
+        b.to_string_lossy().into_owned()
+    }
+
+    /// O caso que estava QUEBRADO: `InstallLocation` entre aspas.
+    ///
+    /// Sem aparar, o `join` monta um caminho que nunca existe e a detecção cai
+    /// no `DisplayIcon` — funcionava, mas pelo caminho errado, e o `location`
+    /// devolvido pra UI saía com as aspas dentro.
+    #[test]
+    fn install_location_entre_aspas_e_aparado() {
+        let dir = p(&["base", "LocalZip"]);
+        let exe = p(&["base", "LocalZip", "LocalZip.exe"]);
+        let (achado, loc) = exe_and_location_from_registry_values(
+            &format!("\"{dir}\""),
+            "",
+            "LocalZip.exe",
+            only(&[&exe]),
+        );
+        assert_eq!(achado, exe, "as aspas do InstallLocation têm que sair");
+        assert_eq!(loc, dir, "o location que vai pra UI não pode levar aspas");
+    }
+
+    #[test]
+    fn sem_install_location_cai_no_display_icon() {
+        let exe = p(&["prog", "LocalMind", "LocalMind.exe"]);
+        let dir = p(&["prog", "LocalMind"]);
+        let (achado, loc) = exe_and_location_from_registry_values(
+            "",
+            &format!("{exe},0"),
+            "LocalMind.exe",
+            only(&[&exe]),
+        );
+        assert_eq!(achado, exe);
+        assert_eq!(loc, dir, "sem InstallLocation, o location vem da pasta do ícone");
+    }
+
+    #[test]
+    fn install_location_obsoleto_nao_ganha_do_display_icon() {
+        // Usuário reinstalou noutro lugar: a chave aponta pra pasta que não
+        // existe mais. Aceitar sem conferir daria "programa não encontrado".
+        let antigo = p(&["antigo", "LocalZip"]);
+        let novo = p(&["novo", "LocalZip.exe"]);
+        let (achado, _) = exe_and_location_from_registry_values(
+            &antigo,
+            &format!("{novo},0"),
+            "LocalZip.exe",
+            only(&[&novo]),
+        );
+        assert_eq!(achado, novo);
+    }
+
+    #[test]
+    fn nada_encontrado_devolve_exe_vazio_e_nao_um_caminho_falso() {
+        let (exe, _) = exe_and_location_from_registry_values(
+            &p(&["x"]),
+            &p(&["y", "a.exe"]),
+            "a.exe",
+            |_| false,
+        );
+        assert_eq!(exe, "");
+        let (exe, loc) = exe_and_location_from_registry_values("", "", "a.exe", |_| true);
+        assert_eq!((exe.as_str(), loc.as_str()), ("", ""));
+        let (exe, loc) = exe_and_location_from_registry_values("  ", "  ", "a.exe", |_| true);
+        assert_eq!((exe.as_str(), loc.as_str()), ("", ""));
+    }
+
+    #[test]
+    fn display_icon_so_com_o_indice_nao_vira_caminho_vazio() {
+        let (exe, _) = exe_and_location_from_registry_values("", ",0", "a.exe", |_| true);
+        assert_eq!(exe, "");
+    }
+
+    #[test]
+    fn virgula_dentro_das_aspas_e_parte_do_caminho() {
+        // Pasta com vírgula no nome é legal no Windows. Cortar na vírgula
+        // ANTES de olhar as aspas mutilaria o caminho.
+        assert_eq!(clean_display_icon("\"C:\\Rock, Paper\\app.exe\""), "C:\\Rock, Paper\\app.exe");
+        // Sem aspas, a vírgula é o índice do ícone (formato electron-builder).
+        assert_eq!(clean_display_icon("C:\\App\\app.exe,0"), "C:\\App\\app.exe");
+        assert_eq!(clean_install_location("  \"C:\\App\"  "), "C:\\App");
+        assert_eq!(clean_install_location(""), "");
+    }
+
+    // Só no Windows: aqui os literais com barra invertida SÃO o objeto do
+    // teste (é o texto que o registro do Windows guarda), então neutralizá-los
+    // perderia o sentido.
+    #[cfg(windows)]
+    #[test]
+    fn valores_reais_do_registro_desta_maquina() {
+        // COPIADOS do registro em 2026-07-20 (HKCU\...\Uninstall). Foi por
+        // escrever o teste de cabeça que o bug passou despercebido: os dois
+        // detalhes que só o dado real mostra são o `InstallLocation` ENTRE
+        // ASPAS e o `DisplayIcon` entre aspas e SEM o `,0`.
+        let loc = r#""C:\Users\Hades\AppData\Local\LocalZip""#;
+        let icon = r#""C:\Users\Hades\AppData\Local\LocalZip\localzip.exe""#;
+        let real = r"C:\Users\Hades\AppData\Local\LocalZip\LocalZip.exe";
+        let (exe, location) =
+            exe_and_location_from_registry_values(loc, icon, "LocalZip.exe", only(&[real]));
+        assert_eq!(exe, real, "o InstallLocation real tem que resolver sozinho");
+        assert_eq!(location, r"C:\Users\Hades\AppData\Local\LocalZip");
+
+        // E o formato do electron-builder (LocalMind, também copiado do
+        // registro real): sem InstallLocation e com `,0`.
+        let mind = r"C:\Users\Hades\AppData\Local\Programs\LocalMind\LocalMind.exe";
+        let (exe, location) = exe_and_location_from_registry_values(
+            "",
+            r"C:\Users\Hades\AppData\Local\Programs\LocalMind\LocalMind.exe,0",
+            "LocalMind.exe",
+            only(&[mind]),
+        );
+        assert_eq!(exe, mind);
+        assert_eq!(location, r"C:\Users\Hades\AppData\Local\Programs\LocalMind");
+    }
 
     #[test]
     fn parse_repo_aceita_url_e_owner_repo() {
