@@ -465,6 +465,20 @@ export const CATALOG: CatalogApp[] = [
     accent: "#d97706",
     iconUrl: "https://raw.githubusercontent.com/Anon5T4R/LocalPaint/main/src-tauri/icons/128x128.png",
   },
+  {
+    id: "chesspgn",
+    category: "Jogos",
+    name: "LocalChessPGN",
+    description: "Xadrez — leitor/editor de PGN, tabuleiro, variantes, biblioteca com busca por posição, Stockfish embarcado",
+    kind: "app",
+    repo: "Anon5T4R/LocalChessPGN",
+    assets: { win: "*_x64-setup.exe", linux: "*_amd64.AppImage" },
+    silentArgs: ["/S"],
+    exe: "LocalChessPGN.exe",
+    extensions: ["pgn"],
+    accent: "#78350f",
+    iconUrl: "https://raw.githubusercontent.com/Anon5T4R/LocalChessPGN/main/src-tauri/icons/128x128.png",
+  },
 ];
 
 /** Todas as extensões do catálogo, com os apps candidatos (ordem do catálogo). */

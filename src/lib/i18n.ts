@@ -181,6 +181,7 @@ const pt = {
   "cat.Segurança": "Segurança",
   "cat.Sistema": "Sistema",
   "cat.Automação": "Automação",
+  "cat.Jogos": "Jogos",
   "cat.Meus repositórios": "Meus repositórios",
   "cat.Outros": "Outros",
   "custom.repoDesc": "Repositório do usuário — {repo}",
@@ -214,6 +215,7 @@ const pt = {
   "desc.automation": "Automação de fluxos (n8n/Zapier local) — nós de HTTP/comando/arquivos/JS, .tflow",
   "desc.clip": "Histórico de área de transferência — busca, fixados, popup por atalho global",
   "desc.monitor": "Monitor de sistema — CPU/memória/rede/discos ao vivo, processos com encerrar",
+  "desc.chesspgn": "Xadrez — leitor/editor de PGN, tabuleiro, variantes, biblioteca com busca por posição, Stockfish embarcado",
 
   // Idioma
   "lang.title": "Idioma",
@@ -378,6 +380,7 @@ const en: Record<MessageKey, string> = {
   "cat.Segurança": "Security",
   "cat.Sistema": "System",
   "cat.Automação": "Automation",
+  "cat.Jogos": "Games",
   "cat.Meus repositórios": "My repositories",
   "cat.Outros": "Other",
   "custom.repoDesc": "User repository — {repo}",
@@ -410,6 +413,7 @@ const en: Record<MessageKey, string> = {
   "desc.automation": "Flow automation (local n8n/Zapier) — HTTP/command/files/JS nodes, .tflow",
   "desc.clip": "Clipboard history — search, pinned items, global-shortcut popup",
   "desc.monitor": "System monitor — live CPU/memory/network/disks, processes with end task",
+  "desc.chesspgn": "Chess — PGN reader/editor, board, variations, library with position search, embedded Stockfish",
 
   "lang.title": "Language",
 
@@ -570,6 +574,7 @@ const es: Record<MessageKey, string> = {
   "cat.Segurança": "Seguridad",
   "cat.Sistema": "Sistema",
   "cat.Automação": "Automatización",
+  "cat.Jogos": "Juegos",
   "cat.Meus repositórios": "Mis repositorios",
   "cat.Outros": "Otros",
   "custom.repoDesc": "Repositorio del usuario — {repo}",
@@ -602,6 +607,7 @@ const es: Record<MessageKey, string> = {
   "desc.automation": "Automatización de flujos (n8n/Zapier local) — nodos HTTP/comando/archivos/JS, .tflow",
   "desc.clip": "Historial de portapapeles — búsqueda, fijados, popup con atajo global",
   "desc.monitor": "Monitor de sistema — CPU/memoria/red/discos en vivo, procesos con finalizar",
+  "desc.chesspgn": "Ajedrez — lector/editor de PGN, tablero, variantes, biblioteca con búsqueda por posición, Stockfish embebido",
 
   "lang.title": "Idioma",
 
