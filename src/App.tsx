@@ -60,7 +60,7 @@ import {
 import { setTheme, THEMES, useTheme, type Theme } from "./lib/theme";
 import "./App.css";
 
-type Tab = "apps" | "recentes" | "arquivos";
+type Tab = "apps" | "recentes" | "arquivos" | "manutencao";
 
 function extOf(path: string): string {
   const name = path.split(/[\\/]/).pop() ?? "";
@@ -724,6 +724,12 @@ export default function App() {
           >
             {t("tab.files")}
           </button>
+          <button
+            className={tab === "manutencao" ? "active" : ""}
+            onClick={() => setTab("manutencao")}
+          >
+            {t("clean.title")}
+          </button>
         </nav>
         {tauri && (
           <div className="hub-refresh">
@@ -1055,74 +1061,75 @@ export default function App() {
             </button>
             {assocMsg && <span className="assoc-msg">{assocMsg}</span>}
           </div>
+        </main>
+      )}
 
-          <section className="deep-clean">
-            <h3>{t("clean.title")}</h3>
-            <p className="hint">{t("clean.hint")}</p>
-            <div className="files-actions">
-              <button disabled={!tauri || cleanBusy} onClick={doScanDeepClean}>
-                {cleanBusy ? t("clean.scanning") : t("clean.scan")}
-              </button>
-              {cleanMsg && <span className="assoc-msg">{cleanMsg}</span>}
-            </div>
+      {tab === "manutencao" && (
+        <main className="hub-maintenance">
+          <p className="hint">{t("clean.hint")}</p>
+          <div className="files-actions">
+            <button className="primary" disabled={!tauri || cleanBusy} onClick={doScanDeepClean}>
+              {cleanBusy ? t("clean.scanning") : t("clean.scan")}
+            </button>
+            {cleanMsg && <span className="assoc-msg">{cleanMsg}</span>}
+          </div>
 
-            {cleanScanned && (
-              <>
-                {orphanRoutes.length === 0 &&
-                  downloadsCache.count === 0 &&
-                  leftoverDirs.length === 0 && <p className="hint">{t("clean.nothing")}</p>}
+          {cleanScanned && (
+            <>
+              {orphanRoutes.length === 0 &&
+                downloadsCache.count === 0 &&
+                leftoverDirs.length === 0 && <p className="hint">{t("clean.nothing")}</p>}
 
-                {orphanRoutes.length > 0 && (
-                  <div className="clean-group">
-                    <h4>{t("clean.orphanTitle", { n: orphanRoutes.length })}</h4>
-                    <p className="hint">{t("clean.orphanHint")}</p>
-                    <ul className="clean-list">
-                      {orphanRoutes.map((e) => (
-                        <li key={e.ext}>
-                          <code>.{e.ext}</code> — {e.appName}
-                        </li>
-                      ))}
-                    </ul>
-                    <button disabled={cleanBusy} onClick={doCleanOrphanRoutes}>
-                      {t("clean.orphanClean")}
-                    </button>
-                  </div>
-                )}
+              {orphanRoutes.length > 0 && (
+                <div className="clean-group">
+                  <h4>{t("clean.orphanTitle", { n: orphanRoutes.length })}</h4>
+                  <p className="hint">{t("clean.orphanHint")}</p>
+                  <ul className="clean-list">
+                    {orphanRoutes.map((e) => (
+                      <li key={e.ext}>
+                        <code>.{e.ext}</code> — {e.appName}
+                      </li>
+                    ))}
+                  </ul>
+                  <button disabled={cleanBusy} onClick={doCleanOrphanRoutes}>
+                    {t("clean.orphanClean")}
+                  </button>
+                </div>
+              )}
 
-                {downloadsCache.count > 0 && (
-                  <div className="clean-group">
-                    <h4>{t("clean.downloadsTitle")}</h4>
-                    <p className="hint">
-                      {t("clean.downloadsInfo", {
-                        n: downloadsCache.count,
-                        size: fmtBytes(downloadsCache.bytes),
-                      })}
-                    </p>
-                    <button disabled={cleanBusy} onClick={doCleanDownloads}>
-                      {t("clean.downloadsClean")}
-                    </button>
-                  </div>
-                )}
+              {downloadsCache.count > 0 && (
+                <div className="clean-group">
+                  <h4>{t("clean.downloadsTitle")}</h4>
+                  <p className="hint">
+                    {t("clean.downloadsInfo", {
+                      n: downloadsCache.count,
+                      size: fmtBytes(downloadsCache.bytes),
+                    })}
+                  </p>
+                  <button disabled={cleanBusy} onClick={doCleanDownloads}>
+                    {t("clean.downloadsClean")}
+                  </button>
+                </div>
+              )}
 
-                {leftoverDirs.length > 0 && (
-                  <div className="clean-group">
-                    <h4>{t("clean.dirsTitle")}</h4>
-                    <p className="hint">{t("clean.dirsHint")}</p>
-                    <ul className="clean-list">
-                      {leftoverDirs.map((d) => (
-                        <li key={d.path}>
-                          <code>{d.path}</code> — {fmtBytes(d.bytes)}{" "}
-                          <button disabled={cleanBusy} onClick={() => doRemoveLeftoverDir(d)}>
-                            {t("clean.dirRemove")}
-                          </button>
-                        </li>
-                      ))}
-                    </ul>
-                  </div>
-                )}
-              </>
-            )}
-          </section>
+              {leftoverDirs.length > 0 && (
+                <div className="clean-group">
+                  <h4>{t("clean.dirsTitle")}</h4>
+                  <p className="hint">{t("clean.dirsHint")}</p>
+                  <ul className="clean-list">
+                    {leftoverDirs.map((d) => (
+                      <li key={d.path}>
+                        <code>{d.path}</code> — {fmtBytes(d.bytes)}{" "}
+                        <button disabled={cleanBusy} onClick={() => doRemoveLeftoverDir(d)}>
+                          {t("clean.dirRemove")}
+                        </button>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+            </>
+          )}
         </main>
       )}
 
