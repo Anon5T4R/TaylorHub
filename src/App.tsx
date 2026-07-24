@@ -1,10 +1,14 @@
 import { useEffect, useMemo, useState } from "react";
 import { getVersion } from "@tauri-apps/api/app";
+import { dataDir, localDataDir } from "@tauri-apps/api/path";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { CATALOG, compareVersions, extensionRoutes, type CatalogApp } from "./catalog";
 import {
   addCustomRepo,
   applyAssociations,
+  cleanDownloadsCache,
+  cleanOrphanRoutes,
+  deleteLeftoverDir,
   detectApps,
   getIcon,
   getLatestRelease,
@@ -27,14 +31,19 @@ import {
   recreateShortcuts,
   removeCustomRepo,
   removeRecent,
+  scanDownloadsCache,
+  scanLeftoverDirs,
+  scanOrphanRoutes,
   setGithubToken,
   setRecentPinned,
   uninstallApp,
   updateSelf,
+  type CacheInfo,
   type CustomApp,
   type RecentEntry,
   type AssocEntry,
   type InstalledInfo,
+  type LeftoverDir,
   type Progress,
   type ReleaseInfo,
 } from "./lib/hub";
@@ -169,6 +178,14 @@ export default function App() {
   const [routes, setRoutes] = useState<Record<string, string>>({});
   const [assocMsg, setAssocMsg] = useState<string>("");
   const [shortcutMsg, setShortcutMsg] = useState<string>("");
+
+  // Limpeza profunda: resto de instalar/desinstalar de antes destas correções.
+  const [cleanBusy, setCleanBusy] = useState(false);
+  const [cleanMsg, setCleanMsg] = useState("");
+  const [cleanScanned, setCleanScanned] = useState(false);
+  const [orphanRoutes, setOrphanRoutes] = useState<AssocEntry[]>([]);
+  const [downloadsCache, setDownloadsCache] = useState<CacheInfo>({ count: 0, bytes: 0 });
+  const [leftoverDirs, setLeftoverDirs] = useState<LeftoverDir[]>([]);
   const [hubUpdate, setHubUpdate] = useState<{ current: string; latest: string } | null>(null);
   const [hubUpdateMsg, setHubUpdateMsg] = useState<string>("");
   const [recents, setRecents] = useState<RecentEntry[]>([]);
@@ -597,6 +614,88 @@ export default function App() {
     }
   };
 
+  const doScanDeepClean = async () => {
+    setCleanBusy(true);
+    setCleanMsg("");
+    try {
+      const [orphans, cache] = await Promise.all([scanOrphanRoutes(), scanDownloadsCache()]);
+      setOrphanRoutes(orphans);
+      setDownloadsCache(cache);
+      // Pastas de dados só fazem sentido no formato de instalação do Windows
+      // (AppData\Local\<Nome> pro Tauri, \Programs\<Nome> pro electron-builder).
+      if (os === "windows") {
+        const [localData, roaming] = await Promise.all([localDataDir(), dataDir()]);
+        const notInstalled = [...CATALOG, ...customApps.map(customAsCatalog)].filter(
+          (a) => !installed[a.id]?.installed,
+        );
+        const candidates = new Set<string>();
+        for (const a of notInstalled) {
+          candidates.add(`${localData}\\${a.name}`);
+          candidates.add(`${localData}\\Programs\\${a.name}`);
+          candidates.add(`${roaming}\\${a.name}`);
+          candidates.add(`${roaming}\\${a.name.toLowerCase()}`);
+        }
+        setLeftoverDirs(await scanLeftoverDirs([...candidates]));
+      } else {
+        setLeftoverDirs([]);
+      }
+      setCleanScanned(true);
+    } catch (e) {
+      setCleanMsg(t("msg.error", { e: String(e) }));
+    } finally {
+      setCleanBusy(false);
+    }
+  };
+
+  const doCleanOrphanRoutes = async () => {
+    setCleanBusy(true);
+    try {
+      const removed = await cleanOrphanRoutes();
+      setOrphanRoutes([]);
+      // As extensões afetadas voltam a mostrar o default do catálogo em vez
+      // do app que acabou de ser tirado do dispatch.json.
+      setRoutes((prev) => {
+        const next = { ...prev };
+        for (const e of removed) {
+          const apps = routeOptions.get(e.ext);
+          if (apps) next[e.ext] = apps[0].id;
+        }
+        return next;
+      });
+      setCleanMsg(t("clean.doneOrphan", { n: removed.length }));
+    } catch (e) {
+      setCleanMsg(t("msg.error", { e: String(e) }));
+    } finally {
+      setCleanBusy(false);
+    }
+  };
+
+  const doCleanDownloads = async () => {
+    setCleanBusy(true);
+    try {
+      const freed = await cleanDownloadsCache();
+      setDownloadsCache({ count: 0, bytes: 0 });
+      setCleanMsg(t("clean.doneDownloads", { size: fmtBytes(freed) }));
+    } catch (e) {
+      setCleanMsg(t("msg.error", { e: String(e) }));
+    } finally {
+      setCleanBusy(false);
+    }
+  };
+
+  const doRemoveLeftoverDir = async (dir: LeftoverDir) => {
+    setCleanBusy(true);
+    try {
+      const freed = await deleteLeftoverDir(dir.path);
+      setLeftoverDirs((prev) => prev.filter((d) => d.path !== dir.path));
+      setCleanMsg(t("clean.doneDir", { size: fmtBytes(freed) }));
+    } catch (e) {
+      setCleanMsg(t("msg.error", { e: String(e) }));
+    } finally {
+      setCleanBusy(false);
+    }
+  };
+
   return (
     <div className="hub">
       <header className="hub-header">
@@ -956,6 +1055,74 @@ export default function App() {
             </button>
             {assocMsg && <span className="assoc-msg">{assocMsg}</span>}
           </div>
+
+          <section className="deep-clean">
+            <h3>{t("clean.title")}</h3>
+            <p className="hint">{t("clean.hint")}</p>
+            <div className="files-actions">
+              <button disabled={!tauri || cleanBusy} onClick={doScanDeepClean}>
+                {cleanBusy ? t("clean.scanning") : t("clean.scan")}
+              </button>
+              {cleanMsg && <span className="assoc-msg">{cleanMsg}</span>}
+            </div>
+
+            {cleanScanned && (
+              <>
+                {orphanRoutes.length === 0 &&
+                  downloadsCache.count === 0 &&
+                  leftoverDirs.length === 0 && <p className="hint">{t("clean.nothing")}</p>}
+
+                {orphanRoutes.length > 0 && (
+                  <div className="clean-group">
+                    <h4>{t("clean.orphanTitle", { n: orphanRoutes.length })}</h4>
+                    <p className="hint">{t("clean.orphanHint")}</p>
+                    <ul className="clean-list">
+                      {orphanRoutes.map((e) => (
+                        <li key={e.ext}>
+                          <code>.{e.ext}</code> — {e.appName}
+                        </li>
+                      ))}
+                    </ul>
+                    <button disabled={cleanBusy} onClick={doCleanOrphanRoutes}>
+                      {t("clean.orphanClean")}
+                    </button>
+                  </div>
+                )}
+
+                {downloadsCache.count > 0 && (
+                  <div className="clean-group">
+                    <h4>{t("clean.downloadsTitle")}</h4>
+                    <p className="hint">
+                      {t("clean.downloadsInfo", {
+                        n: downloadsCache.count,
+                        size: fmtBytes(downloadsCache.bytes),
+                      })}
+                    </p>
+                    <button disabled={cleanBusy} onClick={doCleanDownloads}>
+                      {t("clean.downloadsClean")}
+                    </button>
+                  </div>
+                )}
+
+                {leftoverDirs.length > 0 && (
+                  <div className="clean-group">
+                    <h4>{t("clean.dirsTitle")}</h4>
+                    <p className="hint">{t("clean.dirsHint")}</p>
+                    <ul className="clean-list">
+                      {leftoverDirs.map((d) => (
+                        <li key={d.path}>
+                          <code>{d.path}</code> — {fmtBytes(d.bytes)}{" "}
+                          <button disabled={cleanBusy} onClick={() => doRemoveLeftoverDir(d)}>
+                            {t("clean.dirRemove")}
+                          </button>
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
+              </>
+            )}
+          </section>
         </main>
       )}
 

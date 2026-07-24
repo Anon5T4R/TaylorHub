@@ -95,6 +95,27 @@ const pt = {
   "assoc.notInstalledOpt": " (não instalado)",
   "assoc.apply": "Aplicar associações",
 
+  // Limpeza profunda
+  "clean.title": "Limpeza profunda",
+  "clean.hint":
+    "Pra quem instalou e desinstalou apps pelo Hub antes destas correções existirem: acha e remove o que ficou pra trás — rotas de arquivo apontando pra um app que não existe mais, o cache de instaladores baixados e pastas de dados de apps já desinstalados.",
+  "clean.scan": "Verificar",
+  "clean.scanning": "Verificando…",
+  "clean.nothing": "Nada pra limpar — tudo certo.",
+  "clean.orphanTitle": "Rotas de arquivo órfãs ({n})",
+  "clean.orphanHint":
+    "Extensões que ainda apontam pro Hub como padrão do Windows, mas o app dono foi desinstalado.",
+  "clean.orphanClean": "Remover rotas órfãs",
+  "clean.downloadsTitle": "Cache de instaladores baixados",
+  "clean.downloadsInfo": "{n} arquivo(s), {size}",
+  "clean.downloadsClean": "Limpar cache de downloads",
+  "clean.dirsTitle": "Pastas de dados esquecidas",
+  "clean.dirsHint": "Pastas em AppData de apps que não estão mais instalados.",
+  "clean.dirRemove": "Remover",
+  "clean.doneOrphan": "{n} rota(s) removida(s).",
+  "clean.doneDownloads": "{size} liberados.",
+  "clean.doneDir": "{size} liberados.",
+
   // Modal do GitHub
   "ghm.title": "Conectar ao GitHub (opcional)",
   "ghm.p1": "Sem login, o GitHub limita as consultas anônimas a",
@@ -276,6 +297,26 @@ const en: Record<MessageKey, string> = {
   "assoc.notInstalledOpt": " (not installed)",
   "assoc.apply": "Apply associations",
 
+  "clean.title": "Deep clean",
+  "clean.hint":
+    "For anyone who installed and uninstalled apps through the Hub before these fixes existed: finds and removes what got left behind — file routes still pointing at an app that no longer exists, the downloaded-installer cache, and data folders from apps you already uninstalled.",
+  "clean.scan": "Scan",
+  "clean.scanning": "Scanning…",
+  "clean.nothing": "Nothing to clean — all good.",
+  "clean.orphanTitle": "Orphaned file routes ({n})",
+  "clean.orphanHint":
+    "Extensions still pointing at the Hub as the Windows default, but the owning app was uninstalled.",
+  "clean.orphanClean": "Remove orphaned routes",
+  "clean.downloadsTitle": "Downloaded installer cache",
+  "clean.downloadsInfo": "{n} file(s), {size}",
+  "clean.downloadsClean": "Clear downloads cache",
+  "clean.dirsTitle": "Forgotten data folders",
+  "clean.dirsHint": "AppData folders from apps that are no longer installed.",
+  "clean.dirRemove": "Remove",
+  "clean.doneOrphan": "{n} route(s) removed.",
+  "clean.doneDownloads": "{size} freed.",
+  "clean.doneDir": "{size} freed.",
+
   "ghm.title": "Connect to GitHub (optional)",
   "ghm.p1": "Without login, GitHub limits anonymous queries to",
   "ghm.p1Strong": "60/hour per IP",
@@ -447,6 +488,26 @@ const es: Record<MessageKey, string> = {
   "assoc.openWith": "Abrir con",
   "assoc.notInstalledOpt": " (no instalado)",
   "assoc.apply": "Aplicar asociaciones",
+
+  "clean.title": "Limpieza profunda",
+  "clean.hint":
+    "Para quien instaló y desinstaló apps por el Hub antes de que existieran estas correcciones: encuentra y elimina lo que quedó atrás — rutas de archivo que aún apuntan a un app que ya no existe, la caché de instaladores descargados y carpetas de datos de apps ya desinstalados.",
+  "clean.scan": "Verificar",
+  "clean.scanning": "Verificando…",
+  "clean.nothing": "Nada que limpiar — todo en orden.",
+  "clean.orphanTitle": "Rutas de archivo huérfanas ({n})",
+  "clean.orphanHint":
+    "Extensiones que siguen apuntando al Hub como predeterminado de Windows, pero la app dueña fue desinstalada.",
+  "clean.orphanClean": "Quitar rutas huérfanas",
+  "clean.downloadsTitle": "Caché de instaladores descargados",
+  "clean.downloadsInfo": "{n} archivo(s), {size}",
+  "clean.downloadsClean": "Limpiar caché de descargas",
+  "clean.dirsTitle": "Carpetas de datos olvidadas",
+  "clean.dirsHint": "Carpetas en AppData de apps que ya no están instaladas.",
+  "clean.dirRemove": "Quitar",
+  "clean.doneOrphan": "{n} ruta(s) eliminada(s).",
+  "clean.doneDownloads": "{size} liberados.",
+  "clean.doneDir": "{size} liberados.",
 
   "ghm.title": "Conectar a GitHub (opcional)",
   "ghm.p1": "Sin inicio de sesión, GitHub limita las consultas anónimas a",

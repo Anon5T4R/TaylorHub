@@ -176,6 +176,45 @@ export async function readDispatch(): Promise<AssocEntry[]> {
   return invoke<AssocEntry[]>("read_dispatch");
 }
 
+// ---------- limpeza profunda ----------
+
+export interface CacheInfo {
+  count: number;
+  bytes: number;
+}
+
+export interface LeftoverDir {
+  path: string;
+  bytes: number;
+}
+
+export async function scanDownloadsCache(): Promise<CacheInfo> {
+  return invoke<CacheInfo>("scan_downloads_cache");
+}
+
+/** Devolve os bytes liberados. */
+export async function cleanDownloadsCache(): Promise<number> {
+  return invoke<number>("clean_downloads_cache");
+}
+
+export async function scanOrphanRoutes(): Promise<AssocEntry[]> {
+  return invoke<AssocEntry[]>("scan_orphan_routes");
+}
+
+/** Remove as rotas órfãs + a ProgID delas no registro; devolve o que foi removido. */
+export async function cleanOrphanRoutes(): Promise<AssocEntry[]> {
+  return invoke<AssocEntry[]>("clean_orphan_routes");
+}
+
+export async function scanLeftoverDirs(paths: string[]): Promise<LeftoverDir[]> {
+  return invoke<LeftoverDir[]>("scan_leftover_dirs", { paths });
+}
+
+/** Devolve os bytes liberados. */
+export async function deleteLeftoverDir(path: string): Promise<number> {
+  return invoke<number>("delete_leftover_dir", { path });
+}
+
 export function onProgress(cb: (p: Progress) => void): Promise<UnlistenFn> {
   return listen<Progress>("hub-progress", (e) => cb(e.payload));
 }

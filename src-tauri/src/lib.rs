@@ -767,13 +767,39 @@ struct Progress {
     total: u64,
 }
 
+fn downloads_dir() -> PathBuf {
+    config_dir().join("downloads")
+}
+
+/// Limpa o cache de downloads: além do payload já usado (removido por quem
+/// chamou), tira qualquer outro arquivo "esquecido" — instalação anterior
+/// interrompida, ou o auto-update do próprio Hub, que fecha o processo antes
+/// de conseguir rodar o `remove_file` (corrigido em `update_self`, mas isso
+/// aqui pega o que já tinha acumulado / o que ainda escapar). Nada nessa
+/// pasta deveria sobreviver mais que alguns minutos, então qualquer arquivo
+/// com mais de 10 min é considerado lixo.
+fn sweep_stale_downloads(skip: &Path) {
+    let Ok(rd) = fs::read_dir(downloads_dir()) else { return };
+    let cutoff = std::time::SystemTime::now() - std::time::Duration::from_secs(600);
+    for entry in rd.flatten() {
+        let path = entry.path();
+        if path == skip {
+            continue;
+        }
+        let stale = entry.metadata().and_then(|m| m.modified()).map(|t| t < cutoff).unwrap_or(true);
+        if stale {
+            let _ = fs::remove_file(&path);
+        }
+    }
+}
+
 async fn download_asset(
     app: &tauri::AppHandle,
     id: &str,
     asset: &AssetInfo,
 ) -> Result<PathBuf, String> {
     use futures_util::StreamExt;
-    let dir = config_dir().join("downloads");
+    let dir = downloads_dir();
     ensure_dir(&dir)?;
     let dest = dir.join(&asset.name);
     let resp = with_auth(http_client()?.get(&asset.url))
@@ -931,6 +957,7 @@ async fn install_app(app: tauri::AppHandle, spec: InstallSpec) -> Result<Install
             write_json(&path, &installs)?;
         }
         let _ = fs::remove_file(&payload);
+        sweep_stale_downloads(&payload);
 
         let detected = detect_one(&DetectSpec {
             id: spec.id.clone(),
@@ -1189,6 +1216,7 @@ async fn install_custom_app(app: tauri::AppHandle, id: String) -> Result<Install
                 let before = uninstall_keys();
                 install_payload(&spec, &payload)?;
                 let _ = fs::remove_file(&payload);
+                sweep_stale_downloads(&payload);
                 // O que apareceu de novo no registro é o app recém-instalado.
                 let after = uninstall_keys();
                 let found = after
@@ -1241,6 +1269,7 @@ async fn install_custom_app(app: tauri::AppHandle, id: String) -> Result<Install
                 );
                 write_json(&path, &installs)?;
                 let _ = fs::remove_file(&payload);
+                sweep_stale_downloads(&payload);
                 Ok((
                     InstalledInfo {
                         id: c.id.clone(),
@@ -1311,6 +1340,11 @@ async fn update_self(app: tauri::AppHandle, spec: SelfUpdateSpec) -> Result<Stri
         // executá-lo. O relançamento é INCONDICIONAL: se o instalador falhar, o
         // usuário fica com a versão antiga aberta em vez de ficar sem Hub, e a
         // saída do instalador vai pra taylorhub-update.log pra diagnóstico.
+        // O `del` do instalador baixado é NECESSÁRIO aqui, não cosmético: como o
+        // Hub sai (`exit`) antes do script rodar, o `remove_file` normal do
+        // `download_asset` nunca executa pra esse download — sem essa linha o
+        // instalador de CADA update do Hub ficava pra sempre em downloads/
+        // (achado real: 20+ instaladores antigos, 1+ GB acumulado).
         let bat = std::env::temp_dir().join("taylorhub-update.cmd");
         let log = std::env::temp_dir().join("taylorhub-update.log");
         let script = format!(
@@ -1318,6 +1352,7 @@ async fn update_self(app: tauri::AppHandle, spec: SelfUpdateSpec) -> Result<Stri
              rem gerado pelo TaylorHub: instala a atualizacao e reabre o app\r\n\
              ping -n 4 127.0.0.1 >nul\r\n\
              \"{inst}\" /S >\"{log}\" 2>&1\r\n\
+             del \"{inst}\"\r\n\
              start \"\" \"{hub}\"\r\n\
              del \"%~f0\"\r\n",
             inst = payload.display(),
@@ -1458,9 +1493,15 @@ fn uninstall_os(spec: &UninstallSpec) -> Result<(), String> {
 
 #[tauri::command]
 async fn uninstall_app(spec: UninstallSpec) -> Result<(), String> {
-    tauri::async_runtime::spawn_blocking(move || uninstall_os(&spec))
-        .await
-        .map_err(|e| format!("Falha na thread de desinstalação: {}", e))?
+    tauri::async_runtime::spawn_blocking(move || {
+        uninstall_os(&spec)?;
+        // Best-effort: o app já foi removido com sucesso: uma falha aqui não
+        // deve virar erro pro usuário, só deixar pra próxima Limpeza profunda.
+        prune_dispatch_for_app(&spec.id);
+        Ok(())
+    })
+    .await
+    .map_err(|e| format!("Falha na thread de desinstalação: {}", e))?
 }
 
 #[derive(Deserialize)]
@@ -1538,6 +1579,50 @@ fn dispatch_path() -> PathBuf {
 #[tauri::command]
 fn read_dispatch() -> Vec<AssocEntry> {
     read_json(&dispatch_path()).unwrap_or_default()
+}
+
+/// Divide as entradas em (mantidas, removidas) pelo predicado — usado tanto
+/// pra podar as rotas de um app desinstalado quanto pra achar órfãs em geral.
+fn partition_dispatch(
+    entries: Vec<AssocEntry>,
+    mut drop_if: impl FnMut(&AssocEntry) -> bool,
+) -> (Vec<AssocEntry>, Vec<AssocEntry>) {
+    let mut kept = Vec::new();
+    let mut removed = Vec::new();
+    for e in entries {
+        if drop_if(&e) {
+            removed.push(e);
+        } else {
+            kept.push(e);
+        }
+    }
+    (kept, removed)
+}
+
+/// Rota órfã: o app dono não está mais onde o dispatch.json diz que estava
+/// (desinstalado por fora do fluxo que já poda, ou o `dispatch.json` é de
+/// antes dessa poda existir). `exists` é injetado pra dar pra testar sem tocar
+/// o disco de verdade.
+fn orphan_routes(
+    entries: Vec<AssocEntry>,
+    exists: impl Fn(&Path) -> bool,
+) -> (Vec<AssocEntry>, Vec<AssocEntry>) {
+    partition_dispatch(entries, |e| e.exe.is_empty() || !exists(Path::new(&e.exe)))
+}
+
+/// Poda as rotas do app da lista + a chave de registro que elas criaram.
+/// Chamado depois de um `uninstall_os` bem-sucedido — antes dessa poda, a
+/// extensão continuava apontando pro Hub como handler padrão do Windows pra
+/// sempre, mesmo com o app removido (achado real: `.py`/`.go` do LocalCode).
+fn prune_dispatch_for_app(app_id: &str) {
+    let entries: Vec<AssocEntry> = read_json(&dispatch_path()).unwrap_or_default();
+    let (kept, removed) = partition_dispatch(entries, |e| e.app_id == app_id);
+    if removed.is_empty() {
+        return;
+    }
+    let _ = write_json(&dispatch_path(), &kept);
+    let exts: Vec<String> = removed.into_iter().map(|e| e.ext).collect();
+    let _ = remove_progids_os(&exts);
 }
 
 /// MIME types conhecidos (Linux); extensão fora daqui vira application/x-taylor-<ext>.
@@ -1669,10 +1754,210 @@ fn apply_assoc_os(entries: &[AssocEntry]) -> Vec<String> {
     warnings
 }
 
+/// Tira do registro a `ProgID` que o Hub criou pra cada extensão da lista.
+/// Só apaga `.ext` se ele ainda apontar pro `Taylor.ext` do Hub — se o usuário
+/// reassociou por fora (Explorer, outro instalador), essa troca não é nossa
+/// pra desfazer.
+#[cfg(windows)]
+fn remove_progids_os(exts: &[String]) -> Vec<String> {
+    use winreg::enums::HKEY_CURRENT_USER;
+    use winreg::RegKey;
+    let mut warnings = Vec::new();
+    let hkcu = RegKey::predef(HKEY_CURRENT_USER);
+    let Ok(classes) = hkcu.open_subkey(r"Software\Classes") else { return warnings };
+    for ext in exts {
+        let progid = format!("Taylor.{}", ext);
+        let ext_key = format!(".{}", ext);
+        if let Ok(extk) = classes.open_subkey(&ext_key) {
+            let current: String = extk.get_value("").unwrap_or_default();
+            if current == progid {
+                if let Err(e) = classes.delete_subkey_all(&ext_key) {
+                    warnings.push(format!(".{}: {}", ext, e));
+                }
+            }
+        }
+        if let Err(e) = classes.delete_subkey_all(&progid) {
+            if e.kind() != std::io::ErrorKind::NotFound {
+                warnings.push(format!("{}: {}", progid, e));
+            }
+        }
+    }
+    warnings
+}
+
+/// Linux: as associações são globais por MIME (xdg-mime), sem registro por
+/// extensão pra apagar — quem chama já regenera o `.desktop`/mime.xml com a
+/// lista atualizada via `apply_assoc_os`, o que já deixa de ofertar os tipos
+/// removidos como padrão.
+#[cfg(not(windows))]
+fn remove_progids_os(_exts: &[String]) -> Vec<String> {
+    Vec::new()
+}
+
 #[tauri::command]
 fn apply_associations(entries: Vec<AssocEntry>) -> Result<Vec<String>, String> {
+    // Extensão que EXISTIA na rotina salva e não está na nova lista (usuário
+    // trocou a rota, ou o app dela foi desinstalado) — sem isso, o `.ext`
+    // ficava apontando pro Hub pra sempre mesmo perdendo a rota.
+    let old: Vec<AssocEntry> = read_json(&dispatch_path()).unwrap_or_default();
+    let new_exts: std::collections::HashSet<&str> = entries.iter().map(|e| e.ext.as_str()).collect();
+    let removed_exts: Vec<String> =
+        old.into_iter().map(|e| e.ext).filter(|ext| !new_exts.contains(ext.as_str())).collect();
+    if !removed_exts.is_empty() {
+        let _ = remove_progids_os(&removed_exts);
+    }
     write_json(&dispatch_path(), &entries)?;
     Ok(apply_assoc_os(&entries))
+}
+
+// ---------------------------------------------------------------------------
+// Limpeza profunda — pra quem instalou/desinstalou apps ANTES dessas correções
+// existirem e ficou com rota órfã, `ProgID` pendurada ou pasta de dados de um
+// app que já não está mais lá. `uninstall_app`/`apply_associations` evitam
+// que a bagunça se repita daqui pra frente; isto aqui varre e resolve a que
+// já existe.
+// ---------------------------------------------------------------------------
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CacheInfo {
+    count: u64,
+    bytes: u64,
+}
+
+fn dir_files_info(dir: &Path) -> CacheInfo {
+    let mut count = 0u64;
+    let mut bytes = 0u64;
+    if let Ok(rd) = fs::read_dir(dir) {
+        for entry in rd.flatten() {
+            if let Ok(meta) = entry.metadata() {
+                if meta.is_file() {
+                    count += 1;
+                    bytes += meta.len();
+                }
+            }
+        }
+    }
+    CacheInfo { count, bytes }
+}
+
+/// Cache de instaladores baixados (`downloads/`). Em uso normal fica vazio —
+/// tudo que sobrevive ali é resto de um download anterior.
+#[tauri::command]
+fn scan_downloads_cache() -> CacheInfo {
+    dir_files_info(&downloads_dir())
+}
+
+#[tauri::command]
+fn clean_downloads_cache() -> u64 {
+    let mut freed = 0u64;
+    if let Ok(rd) = fs::read_dir(downloads_dir()) {
+        for entry in rd.flatten() {
+            if let Ok(meta) = entry.metadata() {
+                if meta.is_file() {
+                    freed += meta.len();
+                    let _ = fs::remove_file(entry.path());
+                }
+            }
+        }
+    }
+    freed
+}
+
+/// Rotas do dispatch.json cujo app não existe mais no caminho gravado —
+/// sobrevivência de uninstalls feitos antes da poda automática existir.
+#[tauri::command]
+fn scan_orphan_routes() -> Vec<AssocEntry> {
+    let entries: Vec<AssocEntry> = read_json(&dispatch_path()).unwrap_or_default();
+    orphan_routes(entries, |p| p.exists()).1
+}
+
+/// Remove as rotas órfãs (dispatch.json) + a `ProgID`/`.ext` que elas tinham
+/// no registro. Devolve as entradas removidas, pra UI relatar o que sumiu.
+#[tauri::command]
+fn clean_orphan_routes() -> Vec<AssocEntry> {
+    let entries: Vec<AssocEntry> = read_json(&dispatch_path()).unwrap_or_default();
+    let (kept, removed) = orphan_routes(entries, |p| p.exists());
+    if removed.is_empty() {
+        return removed;
+    }
+    let _ = write_json(&dispatch_path(), &kept);
+    let exts: Vec<String> = removed.iter().map(|e| e.ext.clone()).collect();
+    let _ = remove_progids_os(&exts);
+    removed
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LeftoverDir {
+    path: String,
+    bytes: u64,
+}
+
+fn dir_size(path: &Path) -> u64 {
+    let mut total = 0u64;
+    let Ok(rd) = fs::read_dir(path) else { return 0 };
+    for entry in rd.flatten() {
+        let p = entry.path();
+        match entry.metadata() {
+            Ok(meta) if meta.is_dir() => total += dir_size(&p),
+            Ok(meta) => total += meta.len(),
+            Err(_) => {}
+        }
+    }
+    total
+}
+
+/// O frontend manda os candidatos (nome de cada app do catálogo que não está
+/// instalado agora, nos formatos de pasta que a suíte usa — Tauri e
+/// electron-builder); aqui só confere quais existem de verdade e o tamanho.
+#[tauri::command]
+fn scan_leftover_dirs(paths: Vec<String>) -> Vec<LeftoverDir> {
+    paths
+        .into_iter()
+        .filter_map(|p| {
+            let path = PathBuf::from(&p);
+            if path.is_dir() {
+                Some(LeftoverDir { bytes: dir_size(&path), path: p })
+            } else {
+                None
+            }
+        })
+        .collect()
+}
+
+/// Só compara texto (case-insensitive) contra as bases — o Windows não
+/// distingue maiúsculas no caminho, e comparar por `Path` component a
+/// component teria o mesmo custo por pouco ganho aqui.
+fn path_is_within_bases(path: &Path, bases: &[String]) -> bool {
+    let target = path.to_string_lossy().to_lowercase();
+    bases.iter().any(|base| {
+        let base = base.to_lowercase();
+        !base.is_empty() && target.starts_with(&base) && target.len() > base.len()
+    })
+}
+
+/// Trava de segurança pro `delete_leftover_dir`: só deixa apagar dentro do
+/// AppData do usuário (Local ou Roaming), nunca um caminho arbitrário — o
+/// candidato vem do frontend, mas quem decide se é seguro apagar é aqui.
+fn is_safe_to_delete(path: &Path) -> bool {
+    let bases: Vec<String> =
+        ["LOCALAPPDATA", "APPDATA"].iter().filter_map(|v| std::env::var(v).ok()).collect();
+    path_is_within_bases(path, &bases)
+}
+
+#[tauri::command]
+fn delete_leftover_dir(path: String) -> Result<u64, String> {
+    let p = PathBuf::from(&path);
+    if !is_safe_to_delete(&p) {
+        return Err(format!("Caminho fora do AppData do usuário, recusado: {}", path));
+    }
+    if !p.is_dir() {
+        return Ok(0);
+    }
+    let bytes = dir_size(&p);
+    fs::remove_dir_all(&p).map_err(|e| format!("Falha ao remover '{}': {}", path, e))?;
+    Ok(bytes)
 }
 
 // ---------------------------------------------------------------------------
@@ -1837,7 +2122,13 @@ pub fn run() {
             set_recent_pinned,
             remove_recent,
             clear_recents,
-            open_recent
+            open_recent,
+            scan_downloads_cache,
+            clean_downloads_cache,
+            scan_orphan_routes,
+            clean_orphan_routes,
+            scan_leftover_dirs,
+            delete_leftover_dir
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
@@ -1847,9 +2138,9 @@ pub fn run() {
 mod tests {
     use super::{
         cache_is_fresh, clean_display_icon, clean_install_location,
-        exe_and_location_from_registry_values, fetch_latest, glob_match, guess_assets, parse_repo,
-        version_from_filename, AssetInfo, CachedRelease, ReleaseCache, ReleaseInfo,
-        RELEASE_CACHE_TTL_SECS,
+        exe_and_location_from_registry_values, fetch_latest, glob_match, guess_assets,
+        orphan_routes, parse_repo, partition_dispatch, path_is_within_bases, version_from_filename,
+        AssetInfo, AssocEntry, CachedRelease, ReleaseCache, ReleaseInfo, RELEASE_CACHE_TTL_SECS,
     };
     use std::path::{Path, PathBuf};
 
@@ -2125,5 +2416,65 @@ mod tests {
         assert!(!glob_match("TaylorMind.Setup.*.exe", "TaylorMind-0.1.0-portable.exe"));
         // Case-insensitive
         assert!(glob_match("*_X64-SETUP.EXE", "localoffice_0.1.0_x64-setup.exe"));
+    }
+
+    fn entry(ext: &str, app_id: &str, exe: &str) -> AssocEntry {
+        AssocEntry { ext: ext.into(), app_id: app_id.into(), app_name: app_id.into(), exe: exe.into() }
+    }
+
+    #[test]
+    fn poda_por_app_ignora_as_rotas_de_outros_apps() {
+        let entries = vec![
+            entry("py", "code", "x"),
+            entry("go", "code", "y"),
+            entry("md", "writer", "z"),
+        ];
+        let (kept, removed) = partition_dispatch(entries, |e| e.app_id == "code");
+        assert_eq!(kept.len(), 1, "só a rota do writer sobrevive");
+        assert_eq!(kept[0].app_id, "writer");
+        assert_eq!(removed.len(), 2, "as duas rotas do code somem");
+        assert!(removed.iter().all(|e| e.app_id == "code"));
+    }
+
+    #[test]
+    fn orfa_e_a_que_o_exe_sumiu_do_disco() {
+        // Caso real: LocalCode foi desinstalado, mas o dispatch.json ainda
+        // apontava pro exe dele — enquanto LocalOffice segue instalado.
+        let writer_exe = "C:/LocalOffice/writer.exe";
+        let entries = vec![entry("py", "code", "C:/LocalCode/code.exe"), entry("md", "writer", writer_exe)];
+        let (kept, removed) = orphan_routes(entries, only(&[writer_exe]));
+        assert_eq!(kept.len(), 1, "a rota do app que ainda existe fica");
+        assert_eq!(kept[0].ext, "md");
+        assert_eq!(removed.len(), 1, "a do exe que sumiu vai pra fora");
+        assert_eq!(removed[0].ext, "py");
+    }
+
+    #[test]
+    fn rota_com_exe_vazio_tambem_e_orfa() {
+        let entries = vec![entry("tdraw", "draw", "")];
+        let (kept, removed) = orphan_routes(entries, |_| true);
+        assert!(kept.is_empty());
+        assert_eq!(removed.len(), 1);
+    }
+
+    #[test]
+    fn leftover_dir_so_e_seguro_dentro_do_appdata() {
+        let bases = vec![r"C:\Users\Hades\AppData\Local".to_string()];
+        assert!(
+            path_is_within_bases(Path::new(r"C:\Users\Hades\AppData\Local\LocalCode"), &bases),
+            "pasta de app dentro do LOCALAPPDATA é o caso de uso normal"
+        );
+        assert!(
+            path_is_within_bases(Path::new(r"c:\users\hades\appdata\local\LocalCode"), &bases),
+            "o Windows não distingue maiúsculas no caminho"
+        );
+        assert!(
+            !path_is_within_bases(Path::new(r"C:\Users\Hades\AppData\Local"), &bases),
+            "a raiz do LOCALAPPDATA em si nunca pode ser o alvo"
+        );
+        assert!(
+            !path_is_within_bases(Path::new(r"C:\Windows\System32"), &bases),
+            "caminho fora do AppData nunca é seguro, mesmo vindo de outro comando"
+        );
     }
 }
