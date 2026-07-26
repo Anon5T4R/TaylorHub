@@ -21,6 +21,7 @@ import {
   installApp,
   installCustomApp,
   launchApp,
+  installFormat,
   linuxPkgManager,
   listCustomRepos,
   onProgress,
@@ -878,6 +879,10 @@ export default function App() {
             // `pkexec`, então o botão de atualizar volta a valer aqui — antes o
             // `!isDeb` o desligava porque não havia como fazer nada.
             const isSystemPkg = info?.source === "deb" || info?.source === "pacman";
+            // O que o Hub VAI instalar desta release nesta maquina. Espelha a
+            // decisao do Rust (ver installFormat) — dizer isto ANTES do clique
+            // e o que evita a surpresa de "instalei e veio AppImage".
+            const fmt = rel ? installFormat(rel.assets, os, pkgMgr, app.assets.linux) : null;
             const hasUpdate =
               info?.installed &&
               rel &&
@@ -900,12 +905,19 @@ export default function App() {
                               {t(info!.source === "pacman" ? "card.pacmanBadge" : "card.debBadge")}
                             </span>
                           )}
+                          {info!.source === "appimage" && (
+                            <span className="badge deb">{t("card.appimageBadge")}</span>
+                          )}
+                          {info!.source === "registry" && (
+                            <span className="badge deb">{t("card.exeBadge")}</span>
+                          )}
                           {hasUpdate && <span className="badge">{t("card.updateBadge", { v: rel!.version })}</span>}
                         </>
                       ) : (
                         <span className="muted">
                           {t("card.notInstalled")}
                           {rel ? t("card.lastVersion", { v: rel.version }) : ""}
+                          {fmt ? t("card.willInstall", { fmt: t(`fmt.${fmt}`) }) : ""}
                         </span>
                       )}
                     </div>

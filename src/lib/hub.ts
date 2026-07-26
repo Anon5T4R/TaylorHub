@@ -256,3 +256,63 @@ export async function clearRecents(): Promise<RecentEntry[]> {
 export async function openRecent(path: string, exe: string): Promise<void> {
   return invoke("open_recent", { path, exe });
 }
+
+// ---------- que formato vai ser instalado ----------
+
+export type InstallFormat = "pacman" | "deb" | "appimage" | "exe" | "desconhecido";
+
+/**
+ * Mesma semântica do `glob_match` do Rust (src-tauri/src/lib.rs): sem regex,
+ * `*` em qualquer posição, comparação em minúsculas, e sem `*` no fim o nome
+ * precisa terminar exatamente onde o padrão parou.
+ */
+export function globMatch(pattern: string, name: string): boolean {
+  const p = pattern.toLowerCase();
+  const n = name.toLowerCase();
+  const partes = p.split("*");
+  let pos = 0;
+  for (let i = 0; i < partes.length; i++) {
+    const parte = partes[i];
+    if (!parte) continue;
+    if (i === 0) {
+      if (!n.startsWith(parte)) return false;
+      pos = parte.length;
+    } else {
+      const achou = n.indexOf(parte, pos);
+      if (achou < 0) return false;
+      pos = achou + parte.length;
+    }
+  }
+  if (!p.endsWith("*") && partes[partes.length - 1] !== "") return n.length === pos;
+  return true;
+}
+
+/**
+ * Qual formato o Hub VAI instalar desta release nesta máquina.
+ *
+ * ESPELHA `pkg::asset_globs_in_order` do Rust, e é por isso que existe: quem
+ * decide de verdade é o back (é lá que se conhece a lista real de assets), mas
+ * o usuário precisa saber o que vai acontecer ANTES de clicar em Instalar. Se
+ * as duas divergirem, o Hub promete uma coisa e faz outra — então as duas leem
+ * exatamente a mesma entrada: os assets da release + o gerenciador da máquina.
+ *
+ * A ordem "nativo primeiro, AppImage como queda" não é preferência estética: o
+ * pacote nativo usa o webkit2gtk DO SISTEMA, enquanto o AppImage carrega o
+ * dele, do Ubuntu do CI — que é a origem da classe de bug que fazia a janela
+ * abrir branca fora do Ubuntu.
+ */
+export function installFormat(
+  assets: { name: string }[],
+  os: string,
+  pkgMgr: string,
+  linuxFallback = "*_amd64.AppImage",
+): InstallFormat {
+  const tem = (glob: string) => assets.some((a) => globMatch(glob, a.name));
+
+  if (os === "windows") return tem("*-setup.exe") || tem("*.exe") ? "exe" : "desconhecido";
+
+  if (pkgMgr === "pacman" && tem("*.pkg.tar.zst")) return "pacman";
+  if (pkgMgr === "apt" && tem("*_amd64.deb")) return "deb";
+  if (tem(linuxFallback) || tem("*.AppImage")) return "appimage";
+  return "desconhecido";
+}
