@@ -1,0 +1,76 @@
+# Banco de provas do `scripts/deb-to-arch.sh` — manual, não publica nada.
+#
+# Existe pra exercitar o repack contra um `.deb` DE VERDADE (baixado de uma
+# release já publicada) sem precisar cortar uma release nova a cada tentativa.
+# O caminho arriscado aqui é todo de ambiente — makepkg dentro do container,
+# `bsdtar` lendo o container `ar`, o usuário sem privilégio — e nada disso é
+# exercitável na máquina de desenvolvimento (que é Windows, sem Docker).
+name: Testar repack pro Arch
+
+on:
+  workflow_dispatch:
+    inputs:
+      repo:
+        description: "Repo de onde baixar o .deb (owner/repo)"
+        required: true
+        default: "Anon5T4R/LocalOffice"
+      tag:
+        description: "Tag da release"
+        required: true
+        default: "v0.16.7"
+
+jobs:
+  repack:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Baixar um .deb de verdade
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+          gh release download "${{ inputs.tag }}" --repo "${{ inputs.repo }}" \
+            --pattern "*.deb" --dir dist
+          ls -lh dist/
+
+      - name: Reempacotar pro pacman
+        run: |
+          set -euo pipefail
+          deb="$(ls dist/*.deb | head -1)"
+          mkdir -p dist-arch
+          chmod +x scripts/deb-to-arch.sh
+          docker run --rm -v "$PWD:/w" -w /w archlinux:base-devel \
+            ./scripts/deb-to-arch.sh "$deb" \
+              "https://github.com/${{ inputs.repo }}" \
+              "MIT" \
+              "Teste de repack" \
+              dist-arch
+
+      # A prova que interessa: o pacote INSTALA de verdade num Arch limpo? Um
+      # `.pkg.tar.zst` bem formado que o pacman recusa (dependência inexistente,
+      # conflito de arquivo) é o modo de falha que só aparece aqui.
+      - name: Instalar o pacote num Arch limpo
+        run: |
+          set -euo pipefail
+          pkg="$(ls dist-arch/*.pkg.tar.zst | head -1)"
+          docker run --rm -v "$PWD:/w" -w /w archlinux:latest bash -c "
+            set -euo pipefail
+            pacman -Sy --noconfirm >/dev/null
+            pacman -U --noconfirm '$pkg'
+            echo '--- instalado; conferindo o que ficou no sistema ---'
+            pacman -Ql \$(pacman -Qq | tail -1) | head -20
+            echo '--- metadados que o usuario ve ---'
+            pacman -Qi \$(pacman -Qq | tail -1)
+          "
+
+      - uses: actions/upload-artifact@v6
+        with:
+          name: pacote-arch-teste
+          path: dist-arch/*
+          if-no-files-found: error
+          retention-days: 3

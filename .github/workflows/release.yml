@@ -23,7 +23,9 @@ jobs:
             bundles: nsis
           - platform: ubuntu-22.04
             rust-target: x86_64-unknown-linux-gnu
-            bundles: appimage
+            # `deb` junto do AppImage: além de servir Debian/Ubuntu, é ele que
+            # o job `arch` reempacota em `.pkg.tar.zst` (ver scripts/deb-to-arch.sh).
+            bundles: appimage,deb
 
     runs-on: ${{ matrix.platform }}
     timeout-minutes: 60
@@ -89,7 +91,8 @@ jobs:
           mkdir -p dist-release
           encontrou=0
           for p in src-tauri/target/release/bundle/nsis/*-setup.exe \
-                   src-tauri/target/release/bundle/appimage/*.AppImage; do
+                   src-tauri/target/release/bundle/appimage/*.AppImage \
+                   src-tauri/target/release/bundle/deb/*.deb; do
             [ -e "$p" ] || continue
             cp "$p" dist-release/
             echo "empacotado: $(basename "$p") ($(du -h "$p" | cut -f1))"
@@ -100,11 +103,65 @@ jobs:
             exit 1
           fi
 
+      # Nome por PLATAFORMA, não por `bundles`: desde que o Linux passou a
+      # gerar dois formatos, `bundles` virou "appimage,deb" — nome de artefato
+      # com vírgula é o tipo de coisa que funciona até o dia em que não funciona,
+      # e o job `arch` precisa referenciar este nome explicitamente.
       - name: Guardar o instalador
         uses: actions/upload-artifact@v6
         with:
-          name: instalador-${{ matrix.bundles }}
+          name: instalador-${{ matrix.platform }}
           path: dist-release/*
+          if-no-files-found: error
+          retention-days: 7
+
+  # ---------------------------------------------------------------------------
+  # PACOTE NATIVO DO ARCH (.pkg.tar.zst), reempacotado do .deb.
+  #
+  # Não compila nada — pega o .deb que o job de Linux acabou de produzir e o
+  # converte. O porquê de ser repack (e não uma segunda build dentro do Arch)
+  # está no cabeçalho do `scripts/deb-to-arch.sh`.
+  #
+  # Roda o container à mão em vez de usar `container:` no job: a imagem do Arch
+  # não tem Node, e as actions do GitHub (checkout, download/upload-artifact)
+  # precisam de Node pra rodar. Assim as actions ficam no runner e só o makepkg
+  # entra no container.
+  # ---------------------------------------------------------------------------
+  arch:
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Baixar o .deb
+        uses: actions/download-artifact@v7
+        with:
+          name: instalador-ubuntu-22.04
+          path: dist
+
+      - name: Reempacotar pro pacman
+        shell: bash
+        run: |
+          set -euo pipefail
+          deb="$(ls dist/*.deb | head -1)"
+          [ -n "$deb" ] || { echo "::error::o job de Linux não deixou nenhum .deb"; exit 1; }
+          mkdir -p dist-arch
+          chmod +x scripts/deb-to-arch.sh
+          docker run --rm -v "$PWD:/w" -w /w archlinux:base-devel \
+            ./scripts/deb-to-arch.sh "$deb" \
+              "https://github.com/${GITHUB_REPOSITORY}" \
+              "MIT" \
+              "Instalador e central da suite Local" \
+              dist-arch
+
+      - name: Guardar o pacote do Arch
+        uses: actions/upload-artifact@v6
+        with:
+          name: pacote-arch
+          path: dist-arch/*
           if-no-files-found: error
           retention-days: 7
 
@@ -119,7 +176,7 @@ jobs:
   # segundos em vez de meia hora.
   # ---------------------------------------------------------------------------
   publicar:
-    needs: build
+    needs: [build, arch]
     runs-on: ubuntu-latest
     timeout-minutes: 15
     permissions:
@@ -142,6 +199,10 @@ jobs:
             || { echo "::error::falta o instalador do Windows"; falta=1; }
           ls dist/*.AppImage >/dev/null 2>&1 \
             || { echo "::error::falta o AppImage"; falta=1; }
+          ls dist/*.deb >/dev/null 2>&1 \
+            || { echo "::error::falta o .deb"; falta=1; }
+          ls dist/*.pkg.tar.zst >/dev/null 2>&1 \
+            || { echo "::error::falta o pacote do Arch"; falta=1; }
           exit $falta
 
       - name: Publicar (com retentativa)
@@ -159,7 +220,13 @@ jobs:
 
           ### Downloads
           - **Windows — Instalador:** `*-setup.exe`
-          - **Linux — AppImage:** `*.AppImage` (dê permissão de execução e rode)
+          - **Linux — AppImage:** `*.AppImage` (dê permissão de execução e rode; no Arch precisa do `fuse2`)
+          - **Debian/Ubuntu:** `*.deb` — `sudo apt install ./arquivo.deb`
+          - **Arch e derivados:** `*.pkg.tar.zst` — `sudo pacman -U arquivo.pkg.tar.zst`
+
+          O `.deb` e o pacote do Arch usam o **webkit2gtk do sistema**; o AppImage
+          carrega o dele. Em distro que já tem o webkit em dia, o pacote nativo
+          costuma se comportar melhor.
           EOF
           sed -i "s/__TAG__/$TAG/g" notas.md
 
