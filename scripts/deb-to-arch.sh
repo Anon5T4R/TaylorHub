@@ -166,7 +166,10 @@ echo "--- PKGBUILD ---"; cat PKGBUILD; echo "----------------"
 # pacman resolver na máquina do usuário, não requisito desta build.
 useradd -m builder 2>/dev/null || true
 chown -R builder "$work"
-su builder -s /bin/bash -c "cd '$work/pkgbuild' && makepkg --nodeps --noconfirm"
+# `PACKAGER` aparece no `pacman -Qi` que o usuário lê; sem ele o pacman escreve
+# "Unknown Packager", que num pacote de distribuição lê como coisa inacabada.
+su builder -s /bin/bash -c \
+  "cd '$work/pkgbuild' && PACKAGER='Anon5T4R <https://github.com/Anon5T4R>' makepkg --nodeps --noconfirm"
 
 pkg="$(ls ./*.pkg.tar.zst 2>/dev/null | head -1 || true)"
 [ -n "$pkg" ] || { echo "::error::makepkg terminou sem gerar .pkg.tar.zst"; exit 1; }
