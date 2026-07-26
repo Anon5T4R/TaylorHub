@@ -81,6 +81,16 @@ jobs:
           includeUpdaterJson: false
           args: --bundles ${{ matrix.bundles }}
 
+      # O AppImage sai do runner carregando as libwayland do Ubuntu 22.04 e um
+      # runtime que pede libfuse.so.2. Em Arch/Fedora isso vira janela BRANCA
+      # (EGL_BAD_PARAMETER) — bug que não aparece em nenhum teste do CI, porque
+      # o CI é justamente a distro em que funciona. Ver Anon5T4R/linux-packaging.
+      - name: Consertar o AppImage para outras distros
+        if: matrix.platform == 'ubuntu-22.04'
+        uses: Anon5T4R/linux-packaging/fix-appimage@v1
+        with:
+          path: src-tauri/target/release/bundle/appimage
+
       # Junta o que saiu num lugar só. Se o instalador não estiver aqui, o
       # release para AGORA, com a mensagem certa — e não daqui a 15 minutos
       # com "falha no upload", que mandaria investigar o lugar errado.
@@ -220,7 +230,7 @@ jobs:
 
           ### Downloads
           - **Windows — Instalador:** `*-setup.exe`
-          - **Linux — AppImage:** `*.AppImage` (dê permissão de execução e rode; no Arch precisa do `fuse2`)
+          - **Linux — AppImage:** `*.AppImage` (dê permissão de execução e rode)
           - **Debian/Ubuntu:** `*.deb` — `sudo apt install ./arquivo.deb`
           - **Arch e derivados:** `*.pkg.tar.zst` — `sudo pacman -U arquivo.pkg.tar.zst`
 
