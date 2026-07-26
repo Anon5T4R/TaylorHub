@@ -1436,7 +1436,23 @@ async fn install_custom_app(app: tauri::AppHandle, id: String) -> Result<Install
             }
             #[cfg(not(windows))]
             {
-                let dest = install_payload(&spec, &payload, None)?;
+                // Repositório do usuário no Linux é AppImage por construção: o
+                // `guess_assets` só procura `*.appimage`. O `match` existe pra
+                // essa premissa ser explícita — se um dia o `guess_assets`
+                // aprender `.deb`/`.pkg.tar.zst`, este braço é o lembrete de
+                // que o caminho do card fora do catálogo também precisa saber
+                // o que fazer com um pacote de sistema (que não tem caminho
+                // nosso pra anotar no `installed.json`).
+                let dest = match install_payload(&spec, &payload, None)? {
+                    Installed::AppImage(p) => p,
+                    Installed::Managed => {
+                        return Err(
+                            "Repositórios adicionados por link ainda só instalam AppImage no \
+                             Linux. Instale este pacote pelo gerenciador da sua distro."
+                                .into(),
+                        )
+                    }
+                };
                 let path = linux_installs_path();
                 let mut installs: LinuxInstalls = read_json(&path).unwrap_or_default();
                 installs.0.insert(
