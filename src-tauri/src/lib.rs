@@ -1508,12 +1508,27 @@ pub struct SelfUpdateSpec {
 #[tauri::command]
 async fn update_self(app: tauri::AppHandle, spec: SelfUpdateSpec) -> Result<String, String> {
     let release = fetch_latest(&spec.repo, false).await?;
-    let asset = release
-        .assets
+
+    // No Linux, o MESMO critério do `install_app`: pacote nativo primeiro,
+    // AppImage como queda. Sem isto o Hub instalado por pacman só tinha o
+    // AppImage pra baixar — e trocar o binário por baixo do gerenciador não é
+    // opção, então a atualização simplesmente não acontecia.
+    #[cfg(not(windows))]
+    let globs = pkg::asset_globs_in_order(current_manager(), &spec.asset_pattern);
+    #[cfg(windows)]
+    let globs = vec![spec.asset_pattern.clone()];
+
+    let asset = globs
         .iter()
-        .find(|a| glob_match(&spec.asset_pattern, &a.name))
+        .find_map(|g| release.assets.iter().find(|a| glob_match(g, &a.name)))
         .cloned()
-        .ok_or_else(|| format!("Nenhum asset casa com '{}'", spec.asset_pattern))?;
+        .ok_or_else(|| {
+            format!(
+                "Nenhum asset da release {} casa com {}",
+                release.tag,
+                globs.iter().map(|g| format!("'{}'", g)).collect::<Vec<_>>().join(" nem ")
+            )
+        })?;
     let payload = download_asset(&app, "hub", &asset).await?;
 
     #[cfg(windows)]
@@ -1572,11 +1587,31 @@ async fn update_self(app: tauri::AppHandle, spec: SelfUpdateSpec) -> Result<Stri
     #[cfg(not(windows))]
     {
         use std::os::unix::fs::PermissionsExt;
-        // Sem `$APPIMAGE` o Hub não está rodando de um AppImage — e desde a
-        // v0.24 o caso comum disso é ele ter sido instalado como PACOTE DE
-        // SISTEMA. Trocar o binário por baixo do pacman/dpkg seria mentir pro
-        // gerenciador (ele seguiria achando que o arquivo é o da versão
-        // antiga), então aqui o certo é não fazer e dizer por quê.
+        // Instalado como PACOTE DE SISTEMA: quem troca o binário é o próprio
+        // gerenciador, por `pkexec` — a mesma porta que o Hub já usa pra
+        // instalar os outros apps.
+        //
+        // Antes daqui a atualização era RECUSADA neste caso, e o motivo estava
+        // certo: sobrescrever o arquivo por baixo do pacman/dpkg deixaria o
+        // gerenciador achando que ainda é a versão antiga. O erro era a
+        // conclusão — a saída não é recusar, é passar pelo gerenciador, que é
+        // exatamente o que mantém a informação dele correta.
+        let nome_payload = payload
+            .file_name()
+            .map(|s| s.to_string_lossy().to_lowercase())
+            .unwrap_or_default();
+        if nome_payload.ends_with(".pkg.tar.zst") || nome_payload.ends_with(".deb") {
+            let m = current_manager();
+            let cmd = pkg::install_cmd(m, &payload.to_string_lossy()).ok_or_else(|| {
+                format!("Baixei um pacote de sistema ({}) mas esta máquina não tem pacman nem apt.", nome_payload)
+            })?;
+            run_pkg_cmd(&cmd)?;
+            let _ = fs::remove_file(&payload);
+            return Ok("restart".into());
+        }
+
+        // Sem `$APPIMAGE` o Hub não está rodando de um AppImage nem de pacote
+        // de sistema (o caso acima), então não há o que atualizar no lugar.
         let target = std::env::var("APPIMAGE").map_err(|_| {
             let m = current_manager();
             if m == pkg::PkgManager::None {
