@@ -13,6 +13,8 @@
   --accent: #2563eb;
   --err: #dc2626;
   font-family: "Segoe UI", system-ui, -apple-system, sans-serif;
+  /* <select> no Linux: sem isto o GTK pinta o texto com a cor dele. */
+  color-scheme: light;
 }
 
 /* Tema "system": sem data-theme no <html>, o SO decide (ver lib/theme.ts). */
@@ -25,6 +27,8 @@
     --muted: #94a3b8;
     --border: #3f4c61;
     --accent: #3b82f6;
+    /* <select> no Linux: sem isto o GTK pinta o texto com a cor dele. */
+    color-scheme: dark;
   }
 }
 
@@ -37,6 +41,8 @@
   --muted: #94a3b8;
   --border: #3f4c61;
   --accent: #3b82f6;
+  /* <select> no Linux: sem isto o GTK pinta o texto com a cor dele. */
+  color-scheme: dark;
 }
 
 /* Temas nomeados: paletas fixas, sobrepõem o accent do chrome.
@@ -49,6 +55,8 @@
   --border: #dbe3d4;
   --accent: #7a9e7e;
   --err: #c0492f;
+  /* <select> no Linux: sem isto o GTK pinta o texto com a cor dele. */
+  color-scheme: light;
 }
 
 :root[data-theme="darkblue"] {
@@ -59,6 +67,8 @@
   --border: #2d3f59;
   --accent: #3b82f6;
   --err: #f87171;
+  /* <select> no Linux: sem isto o GTK pinta o texto com a cor dele. */
+  color-scheme: dark;
 }
 
 :root[data-theme="calmgreen"] {
@@ -69,6 +79,8 @@
   --border: #d5e0d3;
   --accent: #4f7d5e;
   --err: #c0492f;
+  /* <select> no Linux: sem isto o GTK pinta o texto com a cor dele. */
+  color-scheme: light;
 }
 
 :root[data-theme="pastelpink"] {
@@ -79,6 +91,8 @@
   --border: #ecd3de;
   --accent: #e8799f;
   --err: #d84a6b;
+  /* <select> no Linux: sem isto o GTK pinta o texto com a cor dele. */
+  color-scheme: light;
 }
 
 :root[data-theme="punkprincess"] {
@@ -89,6 +103,8 @@
   --border: #3a2850;
   --accent: #ff2d95;
   --err: #ff5470;
+  /* <select> no Linux: sem isto o GTK pinta o texto com a cor dele. */
+  color-scheme: dark;
 }
 
 * {
@@ -107,11 +123,17 @@ body {
   min-height: 100vh;
 }
 
+/* `flex-wrap` NAO e detalhe: sem ele o cabecalho e uma linha unica que nunca
+   quebra, e numa janela estreita o ultimo item (o seletor de tema) sai pra fora
+   e vira barra de rolagem horizontal na pagina inteira. A janela tem
+   `minWidth: 720` no tauri.conf, mas o cabecalho precisa de mais que isso — e
+   quem redimensiona nao le o tauri.conf. */
 .hub-header {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 16px;
+  flex-wrap: wrap;
+  gap: 10px 16px;
   padding: 14px 22px;
   background: var(--panel);
   border-bottom: 1px solid var(--border);
@@ -140,8 +162,22 @@ body {
   margin-left: 8px;
 }
 
+/* O nome do app nao quebra: "TaylorHub" virando duas linhas fica pior que o
+   subtitulo sumir. Abaixo de 1100px o subtitulo sai — ele e o unico texto do
+   cabecalho que nao carrega funcao nenhuma. */
+.hub-header h1 {
+  white-space: nowrap;
+}
+
+@media (max-width: 1100px) {
+  .hub-sub {
+    display: none;
+  }
+}
+
 .hub-tabs {
   display: flex;
+  flex-wrap: wrap;
   gap: 6px;
 }
 
@@ -164,17 +200,54 @@ body {
 .hub-refresh {
   display: flex;
   align-items: center;
+  flex-wrap: wrap;
   gap: 10px;
 }
 
+/* "Checked 10:04 AM" e o primeiro a sobrar quando o espaco aperta: e informacao
+   de conferencia, nao controle. Sai antes de qualquer botao encolher. */
+@media (max-width: 900px) {
+  .refresh-when {
+    display: none;
+  }
+}
+
 .hub-header .lang-select {
+  /* `appearance: none` tira o desenho nativo do GTK do controle FECHADO, que e
+     o que aparecia com a cor errada. Sem isto, `color` continua sendo palpite:
+     o GTK pinta o texto com a cor dele, nao com a nossa. A seta some junto com
+     o desenho nativo, entao vem de volta como background-image. */
+  appearance: none;
+  -webkit-appearance: none;
   border: 1px solid var(--border);
-  background: var(--panel);
+  background-color: var(--panel);
   color: var(--text);
   border-radius: 8px;
-  padding: 7px 8px;
+  padding: 7px 30px 7px 10px;
   font-size: 13px;
   cursor: pointer;
+  /* Seta em SVG inline com `currentColor`: acompanha o --text de cada tema
+     sozinha, sem um asset por tema. */
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6' viewBox='0 0 10 6'%3E%3Cpath d='M1 1l4 4 4-4' fill='none' stroke='%23888' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 10px center;
+}
+
+.hub-header .lang-select:hover {
+  border-color: var(--accent);
+}
+
+.hub-header .lang-select:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+/* O popup de <option> e janela nativa do GTK: `color-scheme` (no topo do
+   arquivo) e o que o deixa escuro. Estas cores servem aos motores que ainda
+   estilizam a lista, e sao inofensivas onde nao servem. */
+.hub-header .lang-select option {
+  background-color: var(--panel);
+  color: var(--text);
 }
 
 .refresh-btn {
@@ -557,13 +630,20 @@ body {
   font-size: 12.5px;
 }
 
+/* Mesmo caso do `.lang-select`: sem `appearance: none` o GTK desenha o controle
+   e escolhe a cor do texto. Ver o bloco `color-scheme` no topo do arquivo. */
 .hub-files select {
+  appearance: none;
+  -webkit-appearance: none;
   width: 100%;
-  padding: 5px 8px;
+  padding: 5px 26px 5px 8px;
   border-radius: 6px;
   border: 1px solid var(--border);
-  background: var(--bg);
+  background-color: var(--bg);
   color: var(--text);
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6' viewBox='0 0 10 6'%3E%3Cpath d='M1 1l4 4 4-4' fill='none' stroke='%23888' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 8px center;
 }
 
 .files-actions {
