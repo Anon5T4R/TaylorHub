@@ -1,6 +1,6 @@
 [package]
 name = "hub"
-version = "0.24.3"
+version = "0.24.4"
 description = "TaylorHub - instala, atualiza e abre os apps da suite Local"
 authors = ["Joao / Taylor"]
 edition = "2021"
