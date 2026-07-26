@@ -1812,11 +1812,17 @@ pub struct ShortcutEntry {
 
 /// Linux: (re)cria as entradas de menu .desktop dos apps instalados.
 /// No Windows é no-op (o instalador NSIS já cria os atalhos).
+///
+/// `remove` traz os ids que NÃO devem ter entrada nossa — na prática, os apps
+/// instalados como pacote de sistema, que já trazem o `.desktop` deles. Sem
+/// isso o menu fica com duas entradas do mesmo app, e a nossa aparece com
+/// ícone genérico. Limpar aqui é o que conserta quem já ficou com a duplicata
+/// de versões anteriores; só parar de criar não desfaz o que existe.
 #[tauri::command]
-fn recreate_shortcuts(entries: Vec<ShortcutEntry>) -> Vec<String> {
+fn recreate_shortcuts(entries: Vec<ShortcutEntry>, remove: Vec<String>) -> Vec<String> {
     #[cfg(windows)]
     {
-        let _ = entries;
+        let _ = (entries, remove);
         Vec::new()
     }
     #[cfg(not(windows))]
@@ -1831,8 +1837,24 @@ fn recreate_shortcuts(entries: Vec<ShortcutEntry>) -> Vec<String> {
                 warnings.push(format!("{}: {}", e.name, err));
             }
         }
+        for id in &remove {
+            let _ = remove_desktop_entry(id);
+        }
         warnings
     }
+}
+
+/// Apaga a entrada de menu que o Hub criou para `id`, se existir.
+#[cfg(not(windows))]
+fn remove_desktop_entry(id: &str) -> Result<(), String> {
+    let home = PathBuf::from(std::env::var("HOME").map_err(|_| "HOME não definido".to_string())?);
+    let dir = home.join(".local/share/applications");
+    let f = dir.join(format!("taylor-{}.desktop", id));
+    if f.exists() {
+        fs::remove_file(&f).map_err(|e| e.to_string())?;
+        let _ = Command::new("update-desktop-database").arg(&dir).status();
+    }
+    Ok(())
 }
 
 // ---------------------------------------------------------------------------

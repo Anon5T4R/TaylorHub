@@ -172,8 +172,9 @@ export async function updateSelf(os: string): Promise<string> {
 
 export async function recreateShortcuts(
   entries: { id: string; name: string; exe: string }[],
+  remove: string[] = [],
 ): Promise<string[]> {
-  return invoke<string[]>("recreate_shortcuts", { entries });
+  return invoke<string[]>("recreate_shortcuts", { entries, remove });
 }
 
 export async function launchApp(exe: string, file?: string): Promise<void> {
@@ -315,4 +316,17 @@ export function installFormat(
   if (pkgMgr === "apt" && tem("*_amd64.deb")) return "deb";
   if (tem(linuxFallback) || tem("*.AppImage")) return "appimage";
   return "desconhecido";
+}
+
+/**
+ * O app está instalado pelo gerenciador de pacotes do sistema (pacman/apt)?
+ *
+ * Existe porque este teste estava ESCRITO À MÃO em quatro lugares, e quando o
+ * pacman entrou (v0.24) três deles ficaram só com `!== "deb"`. O sintoma foi o
+ * Hub criar um atalho `.desktop` duplicado — com ícone genérico — para apps que
+ * já trazem o seu, vindo do pacote. Um lugar só é o que impede a próxima origem
+ * de instalação de repetir a história.
+ */
+export function isSystemPackage(source: string | undefined): boolean {
+  return source === "deb" || source === "pacman";
 }

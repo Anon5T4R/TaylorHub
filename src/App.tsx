@@ -22,6 +22,7 @@ import {
   installCustomApp,
   launchApp,
   installFormat,
+  isSystemPackage,
   linuxPkgManager,
   listCustomRepos,
   onProgress,
@@ -233,7 +234,6 @@ export default function App() {
         const rel = latest[app.id];
         return (
           !!info?.installed &&
-          info.source !== "deb" &&
           !!rel &&
           !!info.version &&
           compareVersions(rel.version, info.version) > 0
@@ -368,7 +368,7 @@ export default function App() {
         // Linux: se já existe um AppImage (mesmo instalado por fora), atualiza NO MESMO caminho.
         const current = installed[app.id];
         const currentPath =
-          os !== "windows" && current?.installed && current.source !== "deb"
+          os !== "windows" && current?.installed && !isSystemPackage(current.source)
             ? current.exe
             : undefined;
         const info = await installApp(app, os, currentPath);
@@ -576,14 +576,23 @@ export default function App() {
 
   const doRecreateShortcuts = async () => {
     const entries = CATALOG.filter(
-      (a) => installed[a.id]?.installed && installed[a.id].source !== "deb" && installed[a.id].exe,
+      (a) =>
+        installed[a.id]?.installed &&
+        !isSystemPackage(installed[a.id].source) &&
+        installed[a.id].exe,
     ).map((a) => ({ id: a.id, name: a.name, exe: installed[a.id].exe }));
-    if (!entries.length) {
+    // Pacote de sistema já traz o `.desktop` dele. Além de não criar o nosso,
+    // apagamos o que versões anteriores deixaram — senão o menu segue com duas
+    // entradas do mesmo app, e a nossa com ícone genérico.
+    const remove = CATALOG.filter(
+      (a) => installed[a.id]?.installed && isSystemPackage(installed[a.id].source),
+    ).map((a) => a.id);
+    if (!entries.length && !remove.length) {
       setShortcutMsg(t("msg.noShortcut"));
       return;
     }
     try {
-      const warnings = await recreateShortcuts(entries);
+      const warnings = await recreateShortcuts(entries, remove);
       setShortcutMsg(
         warnings.length
           ? t("msg.shortcutWarn", { w: warnings.join("; ") })
@@ -878,7 +887,7 @@ export default function App() {
             // isto deixou de ser um beco sem saída: o Hub instala e remove por
             // `pkexec`, então o botão de atualizar volta a valer aqui — antes o
             // `!isDeb` o desligava porque não havia como fazer nada.
-            const isSystemPkg = info?.source === "deb" || info?.source === "pacman";
+            const isSystemPkg = isSystemPackage(info?.source);
             // O que o Hub VAI instalar desta release nesta maquina. Espelha a
             // decisao do Rust (ver installFormat) — dizer isto ANTES do clique
             // e o que evita a surpresa de "instalei e veio AppImage".
