@@ -51,10 +51,12 @@ const pt = {
 
   // Grade de apps
   "linux.recreate": "Recriar atalhos do menu",
+  "linux.pkgNative": "Esta máquina usa {mgr}: os apps entram como pacote do sistema (o {mgr} pede sua senha numa janela do próprio sistema). Quando a release não tiver pacote nativo, o Hub cai no AppImage.",
   "repo.placeholder": "github.com/dono/repo — adicionar app de fora do catálogo",
   "repo.adding": "Adicionando…",
   "repo.add": "Adicionar repositório",
   "card.debBadge": "via .deb",
+  "card.pacmanBadge": "via pacman",
   "card.updateBadge": "v{v} disponível",
   "card.notInstalled": "não instalado",
   "card.lastVersion": " — última: v{v}",
@@ -66,7 +68,7 @@ const pt = {
   "act.uninstall": "Desinstalar",
   "act.removeFromList": "Remover da lista",
   "act.removeFromListTitle": "Tirar da lista do Hub (não desinstala)",
-  "card.debHint": "Instalado pelo gerenciador de pacotes — atualize/remova com o apt.",
+  "card.debHint": "Instalado pelo gerenciador de pacotes do sistema — atualizar e remover pelo Hub pedem sua senha de administrador.",
 
   // Atualizar tudo (fila em série)
   "queue.updateAll": "Atualizar tudo ({n})",
@@ -258,10 +260,12 @@ const en: Record<MessageKey, string> = {
   "banner.updateBtn": "Update the Hub",
 
   "linux.recreate": "Recreate menu shortcuts",
+  "linux.pkgNative": "This machine uses {mgr}: apps are installed as system packages ({mgr} asks for your password in a system dialog). When a release has no native package, the Hub falls back to the AppImage.",
   "repo.placeholder": "github.com/owner/repo — add an app from outside the catalog",
   "repo.adding": "Adding…",
   "repo.add": "Add repository",
   "card.debBadge": "via .deb",
+  "card.pacmanBadge": "via pacman",
   "card.updateBadge": "v{v} available",
   "card.notInstalled": "not installed",
   "card.lastVersion": " — latest: v{v}",
@@ -273,7 +277,7 @@ const en: Record<MessageKey, string> = {
   "act.uninstall": "Uninstall",
   "act.removeFromList": "Remove from list",
   "act.removeFromListTitle": "Remove from the Hub list (doesn't uninstall)",
-  "card.debHint": "Installed by the package manager — update/remove it with apt.",
+  "card.debHint": "Installed by the system package manager — updating and removing from the Hub ask for your administrator password.",
 
   "queue.updateAll": "Update all ({n})",
   "confirm.updateAll":
@@ -452,10 +456,12 @@ const es: Record<MessageKey, string> = {
   "banner.updateBtn": "Actualizar el Hub",
 
   "linux.recreate": "Recrear accesos del menú",
+  "linux.pkgNative": "Esta máquina usa {mgr}: las apps se instalan como paquete del sistema ({mgr} pide tu contraseña en una ventana del propio sistema). Si la release no trae paquete nativo, el Hub usa el AppImage.",
   "repo.placeholder": "github.com/dueño/repo — añadir app fuera del catálogo",
   "repo.adding": "Añadiendo…",
   "repo.add": "Añadir repositorio",
   "card.debBadge": "vía .deb",
+  "card.pacmanBadge": "vía pacman",
   "card.updateBadge": "v{v} disponible",
   "card.notInstalled": "no instalado",
   "card.lastVersion": " — última: v{v}",
@@ -467,7 +473,7 @@ const es: Record<MessageKey, string> = {
   "act.uninstall": "Desinstalar",
   "act.removeFromList": "Quitar de la lista",
   "act.removeFromListTitle": "Quitar de la lista del Hub (no desinstala)",
-  "card.debHint": "Instalado por el gestor de paquetes — actualiza/quita con apt.",
+  "card.debHint": "Instalado por el gestor de paquetes del sistema — actualizar y quitar desde el Hub piden tu contraseña de administrador.",
 
   "queue.updateAll": "Actualizar todo ({n})",
   "confirm.updateAll":

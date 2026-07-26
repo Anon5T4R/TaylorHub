@@ -140,6 +140,18 @@ export async function installApp(
   });
 }
 
+/**
+ * O gerenciador de pacotes desta máquina ("pacman", "apt" ou "" quando não há
+ * nenhum conhecido — aí o caminho é o AppImage).
+ *
+ * Serve só pra AVISAR o usuário: quem escolhe o asset é o Rust, no
+ * `install_app`, que é onde se conhece a lista real de assets da release.
+ * Decidir aqui obrigaria o front a adivinhar se a release tem pacote nativo.
+ */
+export async function linuxPkgManager(): Promise<string> {
+  return invoke<string>("linux_pkg_manager");
+}
+
 export async function uninstallApp(app: CatalogApp, info: InstalledInfo): Promise<void> {
   return invoke("uninstall_app", {
     spec: { id: app.id, name: app.name, exe: info.exe, source: info.source },

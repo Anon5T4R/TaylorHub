@@ -21,6 +21,7 @@ import {
   installApp,
   installCustomApp,
   launchApp,
+  linuxPkgManager,
   listCustomRepos,
   onProgress,
   clearRecents,
@@ -170,6 +171,8 @@ export default function App() {
   const theme = useTheme();
   const [tab, setTab] = useState<Tab>("apps");
   const [os, setOs] = useState<string>("windows");
+  /** "pacman" | "apt" | "" — só pra AVISAR; quem escolhe o asset é o Rust. */
+  const [pkgMgr, setPkgMgr] = useState("");
   const [installed, setInstalled] = useState<Record<string, InstalledInfo>>({});
   const [latest, setLatest] = useState<Record<string, ReleaseInfo>>({});
   const [progress, setProgress] = useState<Record<string, Progress>>({});
@@ -317,6 +320,7 @@ export default function App() {
     (async () => {
       try {
         setOs(await getOs());
+        linuxPkgManager().then(setPkgMgr).catch(() => {});
         const customs = await listCustomRepos();
         setCustomApps(customs);
         githubTokenStatus().then(setGhLogged).catch(() => {});
@@ -839,6 +843,12 @@ export default function App() {
             <div className="linux-bar">
               <button onClick={doRecreateShortcuts}>{t("linux.recreate")}</button>
               {shortcutMsg && <span className="assoc-msg">{shortcutMsg}</span>}
+              {/* Dizer ANTES, não depois: numa maquina com pacman/apt a
+                  instalacao abre um dialogo de senha do sistema, e um pedido de
+                  senha que aparece do nada parece coisa errada. */}
+              {pkgMgr && (
+                <span className="assoc-msg">{t("linux.pkgNative", { mgr: pkgMgr })}</span>
+              )}
             </div>
           )}
           <div className="repo-bar">
@@ -863,10 +873,13 @@ export default function App() {
           {apps.map((app) => {
             const info = installed[app.id];
             const rel = latest[app.id];
-            const isDeb = info?.source === "deb";
+            // Instalado como pacote de SISTEMA (apt ou pacman). Desde a v0.24
+            // isto deixou de ser um beco sem saída: o Hub instala e remove por
+            // `pkexec`, então o botão de atualizar volta a valer aqui — antes o
+            // `!isDeb` o desligava porque não havia como fazer nada.
+            const isSystemPkg = info?.source === "deb" || info?.source === "pacman";
             const hasUpdate =
               info?.installed &&
-              !isDeb &&
               rel &&
               !!info.version &&
               compareVersions(rel.version, info.version) > 0;
@@ -882,7 +895,11 @@ export default function App() {
                       {info?.installed ? (
                         <>
                           v{info.version || "?"}
-                          {isDeb && <span className="badge deb">{t("card.debBadge")}</span>}
+                          {isSystemPkg && (
+                            <span className="badge deb">
+                              {t(info!.source === "pacman" ? "card.pacmanBadge" : "card.debBadge")}
+                            </span>
+                          )}
                           {hasUpdate && <span className="badge">{t("card.updateBadge", { v: rel!.version })}</span>}
                         </>
                       ) : (
@@ -931,7 +948,10 @@ export default function App() {
                       {t("act.open")}
                     </button>
                   )}
-                  {info?.installed && !isDeb && (
+                  {/* O botão de desinstalar era escondido pra pacote de
+                      sistema (o Hub só sabia dizer "use o apt"). Desde a v0.24
+                      ele remove por `pkexec`, então volta a aparecer. */}
+                  {info?.installed && (
                     <button
                       className="danger"
                       disabled={isBusy || queueRunning}
@@ -950,7 +970,7 @@ export default function App() {
                     </button>
                   )}
                 </div>
-                {isDeb && <div className="deb-hint">{t("card.debHint")}</div>}
+                {isSystemPkg && <div className="deb-hint">{t("card.debHint")}</div>}
               </div>
             );
           })}
