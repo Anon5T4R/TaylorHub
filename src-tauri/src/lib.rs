@@ -241,6 +241,77 @@ fn scan_appimages(name: &str) -> Option<(String, String)> {
     None
 }
 
+/// Existe este programa no PATH? (`which`, sem depender de shell)
+#[cfg(not(windows))]
+fn has_bin(prog: &str) -> bool {
+    Command::new("which")
+        .arg(prog)
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status()
+        .map(|s| s.success())
+        .unwrap_or(false)
+}
+
+/// O gerenciador de pacotes desta máquina. A ESCOLHA é pura e testada
+/// (`pkg::pick_manager`); aqui só se olha o que existe no disco.
+#[cfg(not(windows))]
+fn current_manager() -> pkg::PkgManager {
+    pkg::pick_manager(has_bin("pacman"), has_bin("apt-get"))
+}
+
+/// Qual gerenciador o front deve considerar ao escolher o asset da release.
+/// Vazio = nenhum; aí o caminho é o AppImage, como sempre foi.
+#[tauri::command]
+fn linux_pkg_manager() -> String {
+    #[cfg(not(windows))]
+    {
+        current_manager().as_str().to_string()
+    }
+    #[cfg(windows)]
+    {
+        String::new()
+    }
+}
+
+/// Procura o app no pacman (instalado via `.pkg.tar.zst`). Casa pelo nome
+/// normalizado, a MESMA regra do dpkg — o pacote do Arch nasce do repack do
+/// `.deb` e preserva o `Package:`, então uma regra serve as duas distros.
+/// Retorna (versão, exe).
+#[cfg(not(windows))]
+fn pacman_detect(name: &str) -> Option<(String, String)> {
+    let target = pkg::norm_name(name);
+    // `pacman -Qq` lista só os nomes — barato. Perguntar direto por um nome
+    // chutado não serviria: o nome do pacote ("taylor-hub") não é o nome do
+    // catálogo ("TaylorHub"), e é justamente a normalização que os liga.
+    let out = Command::new("pacman").args(["-Qq"]).output().ok()?;
+    if !out.status.success() {
+        return None;
+    }
+    let nomes = String::from_utf8_lossy(&out.stdout);
+    let encontrado = nomes.lines().map(|l| l.trim()).find(|l| pkg::norm_name(l) == target)?;
+
+    let q = Command::new("pacman").args(["-Q", encontrado]).output().ok()?;
+    let version = pkg::parse_pacman_query(&String::from_utf8_lossy(&q.stdout))?;
+
+    // O executável: primeiro arquivo do pacote em /usr/bin. Mesmo critério do
+    // dpkg logo abaixo.
+    let exe = Command::new("pacman")
+        .args(["-Ql", encontrado])
+        .output()
+        .ok()
+        .and_then(|o| {
+            String::from_utf8_lossy(&o.stdout)
+                .lines()
+                // "taylor-hub /usr/bin/hub" → segunda coluna
+                .filter_map(|l| l.split_whitespace().nth(1))
+                .find(|p| p.starts_with("/usr/bin/") && !p.ends_with('/'))
+                .map(|s| s.to_string())
+        })
+        .unwrap_or_default();
+    Some((version, exe))
+}
+
 /// Procura o app no dpkg (instalado via .deb). Casa o nome do pacote
 /// normalizado ("open-obsidian" ≈ "OpenObsidian"). Retorna (versão, exe).
 #[cfg(not(windows))]
@@ -316,8 +387,20 @@ fn detect_one(spec: &DetectSpec) -> InstalledInfo {
             source: "appimage".into(),
         };
     }
-    // 3) .deb via dpkg (alternativa pra quem não curte AppImage — o Hub só
-    //    mostra/abre; atualizar/remover fica com o apt)
+    // 3) Pacote de SISTEMA. Desde a v0.24 o Hub não só detecta: ele instala e
+    //    remove por `pkexec` (ver `pkg.rs`). A ordem entre pacman e dpkg segue a
+    //    mesma regra do `pick_manager` — pacman primeiro, porque máquina com os
+    //    dois é Arch.
+    if let Some((version, exe)) = pacman_detect(&spec.name) {
+        return InstalledInfo {
+            id: spec.id.clone(),
+            installed: true,
+            version,
+            location: String::new(),
+            exe,
+            source: "pacman".into(),
+        };
+    }
     if let Some((version, exe)) = dpkg_detect(&spec.name) {
         return InstalledInfo {
             id: spec.id.clone(),
@@ -878,8 +961,76 @@ fn write_desktop_entry(id: &str, name: &str, exec: &str) -> Result<(), String> {
     Ok(())
 }
 
+/// Roda um comando de gerenciador de pacotes (já montado por `pkg.rs`).
+///
+/// Sem `pkexec` na máquina não há como pedir privilégio por janela — e aí a
+/// regra da casa vale: **dizer o que não deu e como fazer à mão** em vez de
+/// falhar com "erro ao instalar". Polkit não é garantido (servidor, WM
+/// minimalista), então este caminho não é hipótese remota.
 #[cfg(not(windows))]
-fn install_payload(spec: &InstallSpec, payload: &Path, icon: Option<&[u8]>) -> Result<PathBuf, String> {
+fn run_pkg_cmd(cmd: &[String]) -> Result<(), String> {
+    let manual = pkg::as_manual_command(cmd);
+    if !has_bin("pkexec") {
+        return Err(format!(
+            "Esta máquina não tem `pkexec` (polkit), então o Hub não consegue pedir a senha \
+             de administrador. Rode você mesmo num terminal:\n\n{}",
+            manual
+        ));
+    }
+    let status = Command::new(&cmd[0])
+        .args(&cmd[1..])
+        .status()
+        .map_err(|e| format!("Falha ao executar `{}`: {}", cmd[0], e))?;
+    if status.success() {
+        return Ok(());
+    }
+    // 126/127 do pkexec = o usuário cancelou o diálogo ou a autorização falhou.
+    // Vale distinguir: "cancelei" não é erro do app, e mandar o usuário
+    // investigar um erro que ele mesmo causou é ruído.
+    match status.code() {
+        Some(126) | Some(127) => Err("Autorização cancelada ou negada.".to_string()),
+        code => Err(format!(
+            "O gerenciador de pacotes saiu com código {:?}. Pra ver a mensagem dele, rode:\n\n{}",
+            code, manual
+        )),
+    }
+}
+
+/// Onde o payload baixado foi parar. `Managed` = quem instalou foi o
+/// gerenciador de pacotes, e não há caminho NOSSO pra anotar no
+/// `installed.json` — quem responde "está instalado?" a partir daí é o
+/// `pacman_detect`/`dpkg_detect`, que leem o próprio gerenciador. Anotar um
+/// caminho inventado ali seria criar uma segunda fonte da verdade que
+/// envelhece sozinha (o usuário remove por fora e o Hub segue jurando que está
+/// instalado).
+#[cfg(not(windows))]
+enum Installed {
+    AppImage(PathBuf),
+    Managed,
+}
+
+#[cfg(not(windows))]
+fn install_payload(
+    spec: &InstallSpec,
+    payload: &Path,
+    icon: Option<&[u8]>,
+) -> Result<Installed, String> {
+    // Pacote de SISTEMA: entrega pro gerenciador e sai da frente. Ele cuida do
+    // binário, do `.desktop` e do ícone nos caminhos do sistema — por isso não
+    // se escreve nada em `~/.local` aqui.
+    let nome = payload.file_name().map(|s| s.to_string_lossy().to_lowercase()).unwrap_or_default();
+    if nome.ends_with(".pkg.tar.zst") || nome.ends_with(".deb") {
+        let m = current_manager();
+        let cmd = pkg::install_cmd(m, &payload.to_string_lossy()).ok_or_else(|| {
+            format!(
+                "Baixei um pacote de sistema ({}) mas esta máquina não tem pacman nem apt.",
+                nome
+            )
+        })?;
+        run_pkg_cmd(&cmd)?;
+        return Ok(Installed::Managed);
+    }
+
     // Linux: AppImage → mesmo caminho do já instalado (update in-place) ou
     // ~/Applications/<Name>.AppImage + .desktop com ícone + installed.json
     use std::os::unix::fs::PermissionsExt;
@@ -914,15 +1065,27 @@ fn install_payload(spec: &InstallSpec, payload: &Path, icon: Option<&[u8]>) -> R
 #[tauri::command]
 async fn install_app(app: tauri::AppHandle, spec: InstallSpec) -> Result<InstalledInfo, String> {
     let release = fetch_latest(&spec.repo, false).await?;
-    let asset = release
-        .assets
+
+    // No Linux, PREFERIR o pacote nativo da distro quando a release o tiver —
+    // e cair no que o catálogo pediu (o AppImage) quando não tiver. A escolha
+    // mora aqui, e não no front, por dois motivos: é aqui que se conhece a
+    // lista real de assets da release (o front só tem o glob), e é aqui que se
+    // sabe qual gerenciador a máquina tem. Ordem e porquê em `pkg::asset_globs_in_order`.
+    #[cfg(not(windows))]
+    let globs = pkg::asset_globs_in_order(current_manager(), &spec.asset_pattern);
+    #[cfg(windows)]
+    let globs = vec![spec.asset_pattern.clone()];
+
+    let asset = globs
         .iter()
-        .find(|a| glob_match(&spec.asset_pattern, &a.name))
+        .find_map(|g| release.assets.iter().find(|a| glob_match(g, &a.name)))
         .cloned()
         .ok_or_else(|| {
             format!(
-                "Nenhum asset da release {} de {} casa com '{}'",
-                release.tag, spec.repo, spec.asset_pattern
+                "Nenhum asset da release {} de {} casa com {}",
+                release.tag,
+                spec.repo,
+                globs.iter().map(|g| format!("'{}'", g)).collect::<Vec<_>>().join(" nem ")
             )
         })?;
 
@@ -950,15 +1113,27 @@ async fn install_app(app: tauri::AppHandle, spec: InstallSpec) -> Result<Install
         install_payload(&spec, &payload)?;
         #[cfg(not(windows))]
         {
-            let dest = install_payload(&spec, &payload, icon_bytes.as_deref())?;
-            // Registrar no installed.json (Linux não tem registro).
-            let path = linux_installs_path();
-            let mut installs: LinuxInstalls = read_json(&path).unwrap_or_default();
-            installs.0.insert(
-                spec.id.clone(),
-                LinuxInstall { version: version.clone(), path: dest.to_string_lossy().to_string() },
-            );
-            write_json(&path, &installs)?;
+            match install_payload(&spec, &payload, icon_bytes.as_deref())? {
+                // AppImage é nosso: só o `installed.json` sabe dele.
+                Installed::AppImage(dest) => {
+                    let path = linux_installs_path();
+                    let mut installs: LinuxInstalls = read_json(&path).unwrap_or_default();
+                    installs.0.insert(
+                        spec.id.clone(),
+                        LinuxInstall {
+                            version: version.clone(),
+                            path: dest.to_string_lossy().to_string(),
+                        },
+                    );
+                    write_json(&path, &installs)?;
+                }
+                // Pacote de sistema: NÃO entra no `installed.json`. Quem sabe
+                // é o gerenciador, e ele é a fonte da verdade — inclusive
+                // quando o usuário remover por fora do Hub (`pacman -R` no
+                // terminal), caso em que uma anotação nossa continuaria
+                // jurando que está instalado.
+                Installed::Managed => {}
+            }
         }
         let _ = fs::remove_file(&payload);
         sweep_stale_downloads(&payload);
@@ -1381,8 +1556,28 @@ async fn update_self(app: tauri::AppHandle, spec: SelfUpdateSpec) -> Result<Stri
     #[cfg(not(windows))]
     {
         use std::os::unix::fs::PermissionsExt;
-        let target = std::env::var("APPIMAGE")
-            .map_err(|_| "O Hub não está rodando como AppImage".to_string())?;
+        // Sem `$APPIMAGE` o Hub não está rodando de um AppImage — e desde a
+        // v0.24 o caso comum disso é ele ter sido instalado como PACOTE DE
+        // SISTEMA. Trocar o binário por baixo do pacman/dpkg seria mentir pro
+        // gerenciador (ele seguiria achando que o arquivo é o da versão
+        // antiga), então aqui o certo é não fazer e dizer por quê.
+        let target = std::env::var("APPIMAGE").map_err(|_| {
+            let m = current_manager();
+            if m == pkg::PkgManager::None {
+                "O Hub não está rodando como AppImage, então não há o que atualizar no lugar."
+                    .to_string()
+            } else {
+                format!(
+                    "O Hub foi instalado como pacote de sistema. Baixe a versão nova da página \
+                     de releases e instale com `sudo {} <arquivo>` — atualizar por baixo do \
+                     gerenciador deixaria ele com a informação errada.",
+                    match m {
+                        pkg::PkgManager::Pacman => "pacman -U",
+                        _ => "apt install ./",
+                    }
+                )
+            }
+        })?;
         let tmp = format!("{}.new", target);
         fs::copy(&payload, &tmp).map_err(|e| format!("Falha ao copiar: {}", e))?;
         let mut perms = fs::metadata(&tmp).map_err(|e| e.to_string())?.permissions();
@@ -1465,13 +1660,60 @@ fn uninstall_os(spec: &UninstallSpec) -> Result<(), String> {
     Err(format!("{}: não encontrado no registro", spec.name))
 }
 
+/// O nome do PACOTE deste app no gerenciador — descoberto perguntando ao
+/// próprio gerenciador, nunca montado a partir do nome do app.
+///
+/// É a peça de segurança da desinstalação. O que vai pro `pacman -R` tem que
+/// ser um nome que o gerenciador JÁ LISTA como instalado; derivar
+/// "TaylorHub" → "taylor-hub" por regra seria adivinhar, e adivinhar do lado
+/// errado aqui significa remover software que não é nosso. Por isso a busca é
+/// "ache, entre os pacotes instalados, aquele cujo nome normalizado bate" — se
+/// não achar, não há remoção, e o erro diz isso.
+#[cfg(not(windows))]
+fn installed_pkg_name(m: pkg::PkgManager, app_name: &str) -> Option<String> {
+    let alvo = pkg::norm_name(app_name);
+    let out = match m {
+        pkg::PkgManager::Pacman => Command::new("pacman").args(["-Qq"]).output().ok()?,
+        pkg::PkgManager::Apt => Command::new("dpkg-query")
+            .args(["-W", "-f", "${Package}\\n"])
+            .output()
+            .ok()?,
+        pkg::PkgManager::None => return None,
+    };
+    if !out.status.success() {
+        return None;
+    }
+    String::from_utf8_lossy(&out.stdout)
+        .lines()
+        .map(|l| l.trim())
+        .find(|l| !l.is_empty() && pkg::norm_name(l) == alvo)
+        .map(|s| s.to_string())
+}
+
 #[cfg(not(windows))]
 fn uninstall_os(spec: &UninstallSpec) -> Result<(), String> {
-    if spec.source == "deb" {
-        return Err(format!(
-            "{} foi instalado via .deb — remova com o gerenciador de pacotes (ex.: sudo apt remove).",
-            spec.name
-        ));
+    // Instalado como pacote de sistema: quem remove é o gerenciador, por
+    // `pkexec`. Até a v0.23 o Hub só sabia dizer "remova você mesmo" aqui.
+    if spec.source == "deb" || spec.source == "pacman" {
+        let m = current_manager();
+        if m == pkg::PkgManager::None {
+            return Err(format!(
+                "{} está instalado como pacote de sistema, mas não achei pacman nem apt \
+                 nesta máquina pra removê-lo.",
+                spec.name
+            ));
+        }
+        let nome = installed_pkg_name(m, &spec.name).ok_or_else(|| {
+            format!(
+                "Não achei um pacote instalado com o nome de {} no {}. \
+                 Por segurança o Hub não remove um pacote que ele não conseguiu confirmar.",
+                spec.name,
+                m.as_str()
+            )
+        })?;
+        let cmd = pkg::remove_cmd(m, &nome)
+            .ok_or_else(|| format!("Nome de pacote recusado por segurança: {:?}", nome))?;
+        return run_pkg_cmd(&cmd);
     }
     if !spec.exe.is_empty() && Path::new(&spec.exe).exists() {
         fs::remove_file(&spec.exe).map_err(|e| format!("Falha ao remover AppImage: {}", e))?;
@@ -2130,6 +2372,7 @@ pub fn run() {
         .plugin(tauri_plugin_opener::init())
         .invoke_handler(tauri::generate_handler![
             detect_apps,
+            linux_pkg_manager,
             get_os,
             get_latest_release,
             get_icon,

@@ -74,6 +74,23 @@ pub fn asset_glob(m: PkgManager) -> &'static str {
     }
 }
 
+/// Os globs de asset a tentar, NA ORDEM, para esta máquina.
+///
+/// Existe por causa do rollout: o pacote nativo entra na suíte app por app, e
+/// durante a travessia a maioria das releases só tem AppImage. Se o Hub
+/// simplesmente pedisse `*.pkg.tar.zst` num Arch, todo app ainda não convertido
+/// falharia com "nenhum asset casa" — trocaria um app que instala por um app
+/// que não instala. Então: **tenta o nativo, cai no que o catálogo pediu.**
+///
+/// O fallback vem por parâmetro (e não fixo aqui) porque é o catálogo que sabe
+/// o nome do AppImage de cada app — alguns fogem do padrão `*_amd64.AppImage`.
+pub fn asset_globs_in_order(m: PkgManager, fallback: &str) -> Vec<String> {
+    match m {
+        PkgManager::None => vec![fallback.to_string()],
+        _ => vec![asset_glob(m).to_string(), fallback.to_string()],
+    }
+}
+
 /// Um caminho de arquivo é seguro pra entregar ao gerenciador?
 ///
 /// A regra é curta e serve pra uma coisa só: o argumento **não pode começar com
@@ -218,6 +235,23 @@ mod tests {
         assert!(casa(asset_glob(PkgManager::None), "TaylorHub_0.23.2_amd64.AppImage"));
         // E não se confundem entre si: o .deb não pode casar com o glob do Arch.
         assert!(!casa(asset_glob(PkgManager::Pacman), "TaylorHub_0.23.2_amd64.deb"));
+    }
+
+    /// O rollout é app por app: durante ele, quase toda release só tem
+    /// AppImage. Pedir o nativo E SÓ ele transformaria "instala" em "não acha
+    /// asset" em 30 apps de uma vez.
+    #[test]
+    fn o_nativo_e_preferencia_e_o_appimage_e_a_rede() {
+        let g = asset_globs_in_order(PkgManager::Pacman, "*_amd64.AppImage");
+        assert_eq!(g, vec!["*.pkg.tar.zst", "*_amd64.AppImage"]);
+        let g = asset_globs_in_order(PkgManager::Apt, "*_amd64.AppImage");
+        assert_eq!(g, vec!["*_amd64.deb", "*_amd64.AppImage"]);
+        // Sem gerenciador não há o que preferir: uma tentativa só.
+        let g = asset_globs_in_order(PkgManager::None, "*_amd64.AppImage");
+        assert_eq!(g, vec!["*_amd64.AppImage"]);
+        // O fallback vem de fora porque nem todo app segue o nome padrão.
+        let g = asset_globs_in_order(PkgManager::Pacman, "OpenObsidian-*.AppImage");
+        assert_eq!(g[1], "OpenObsidian-*.AppImage");
     }
 
     #[test]
