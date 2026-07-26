@@ -1,3 +1,7 @@
+// Decisões sobre pacote de sistema no Linux (pacman/apt) — puras e testadas,
+// sem `cfg`, pra o `cargo test` exercitá-las também no Windows. Ver pkg.rs.
+mod pkg;
+
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::{Path, PathBuf};
