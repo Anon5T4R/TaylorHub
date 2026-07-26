@@ -177,7 +177,7 @@ pub fn as_manual_command(cmd: &[String]) -> String {
 /// compartilhada com a do pacman, que é o ponto: o `.deb` e o pacote do Arch
 /// nascem do mesmo build e levam o mesmo `Package:`, então uma regra só serve as
 /// duas distros. (É por isso que o repack NÃO acrescenta o sufixo `-bin` que o
-/// AUR usaria — ver `scripts/deb-to-arch.sh`.)
+/// AUR usaria — ver Anon5T4R/linux-packaging.)
 pub fn norm_name(s: &str) -> String {
     s.chars().filter(|c| c.is_ascii_alphanumeric()).collect::<String>().to_lowercase()
 }
