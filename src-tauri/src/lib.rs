@@ -1059,7 +1059,7 @@ fn install_payload(
     }
 
     write_desktop_entry(&spec.id, &spec.name, &dest.to_string_lossy())?;
-    Ok(dest)
+    Ok(Installed::AppImage(dest))
 }
 
 #[tauri::command]
