@@ -1535,6 +1535,7 @@ version = "0.24.8"
 dependencies = [
  "base64 0.22.1",
  "futures-util",
+ "gtk",
  "keyring",
  "reqwest 0.12.28",
  "serde",
