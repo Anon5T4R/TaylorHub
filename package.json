@@ -1,8 +1,7 @@
-{
+﻿{
   "name": "taylorhub",
   "private": true,
-  "version": "0.24.9",
-  "type": "module",
+  "version": "0.25.0",
   "scripts": {
     "dev": "vite",
     "build": "tsc && vite build",
