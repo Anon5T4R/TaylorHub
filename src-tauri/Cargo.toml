@@ -1,4 +1,4 @@
-﻿[package]
+[package]
 name = "hub"
 version = "0.25.0"
 authors = ["Joao / Taylor"]
